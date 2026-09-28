@@ -273,16 +273,16 @@ client.on('interactionCreate', async (interaction) => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
-  try {
-    if (await commandHandler.handleTicketMessage(message)) return;
-  } catch (error) {
-    console.error(`Could not handle ticket command in guild ${message.guild.id}:`, error.message);
-    await message.reply('The ticket command could not be completed. Check the bot permissions and try again.').catch(() => null);
-    return;
-  }
   await afk.handleMessage(message, afkStore).catch((error) => {
     console.error(`Could not process AFK status in guild ${message.guild.id}:`, error.message);
   });
+  try {
+    if (await commandHandler.handlePrefixCommand(message)) return;
+  } catch (error) {
+    console.error(`Could not handle comma command in guild ${message.guild.id}:`, error.message);
+    await message.reply('The command could not be completed. Check the bot permissions and try again.').catch(() => null);
+    return;
+  }
   const response = autoresponderStore.find(message.guild.id, message.content);
   if (response) await message.reply(response);
 });

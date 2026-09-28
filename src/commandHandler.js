@@ -10,11 +10,15 @@ const {
 const autoresponder = require('./autoresponder');
 const autoresponderStore = require('./autoresponderStore');
 const antinukeStore = require('./antinukeStore');
-const { THRESHOLD, WINDOW_MS } = require('./antinuke');
+const antinuke = require('./antinuke');
+const { THRESHOLD, WINDOW_MS } = antinuke;
 const jailStore = require('./jailStore');
 const logChannelStore = require('./logChannelStore');
 const tempVoiceStore = require('./tempVoiceStore');
 const afkStore = require('./afkStore');
+const welcome = require('./welcome');
+const welcomeStore = require('./welcomeStore');
+const welcomeInteractions = require('./welcomeInteractions');
 const { jailMember, unjailMember } = require('./jail');
 const { parseDuration, buildUserCardEmbed } = require('./moderation');
 const { buildHelpEmbed, MODERATION_PERMISSIONS } = require('./commandInteractions');
@@ -23,6 +27,15 @@ const TICKET_OPEN_BUTTON_ID = 'ticket:open';
 const TICKET_CLOSE_BUTTON_ID = 'ticket:close';
 const MAX_TRANSCRIPT_MESSAGES = 5_000;
 const MAX_TRANSCRIPT_BYTES = 7 * 1024 * 1024;
+
+function buildAfkEmbed(reason) {
+  return {
+    color: 0x57f287,
+    title: 'You are now AFK',
+    description: reason,
+    footer: { text: 'Your AFK status clears when you send a message.' },
+  };
+}
 
 function buildTicketOpenRow() {
   return new ActionRowBuilder().addComponents(
@@ -89,10 +102,77 @@ function parseTicketMessage(content) {
 
 function getMentionedId(value, type) {
   const patterns = {
-    channel: /^<#(\d+)>$/,
-    role: /^<@&(\d+)>$/,
+    channel: /^(?:<#(\d+)>|(\d+))$/,
+    role: /^(?:<@&(\d+)>|(\d+))$/,
   };
-  return patterns[type]?.exec(value)?.[1] || null;
+  const match = patterns[type]?.exec(value);
+  return match?.[1] || match?.[2] || null;
+}
+
+function tokenizePrefixArgs(value) {
+  const args = [];
+  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match;
+  while ((match = pattern.exec(value)) !== null) args.push(match[1] ?? match[2] ?? match[3]);
+  return args;
+}
+
+function parsePrefixCommand(content) {
+  const match = /^,([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(content.trim());
+  if (!match) return null;
+  const rawArgs = (match[2] || '').trim();
+  return { name: match[1].toLowerCase(), rawArgs, args: tokenizePrefixArgs(rawArgs) };
+}
+
+function createPrefixInteraction(message, { subcommand, group = null, values = {} } = {}) {
+  const resolveUser = (value) => {
+    if (!value) return null;
+    const id = value.match(/^(?:<@!?(\d+)>|(\d+))$/)?.slice(1).find(Boolean);
+    if (!id) return null;
+    return message.mentions.users.get(id)
+      || message.guild.members.cache.get(id)?.user
+      || message.client.users.cache.get(id)
+      || null;
+  };
+  const resolveRole = (value) => {
+    const id = value && getMentionedId(value, 'role');
+    return id ? message.guild.roles.cache.get(id) || null : null;
+  };
+  const resolveChannel = (value) => {
+    const id = value && getMentionedId(value, 'channel');
+    return id ? message.guild.channels.cache.get(id) || null : null;
+  };
+  let deferred = false;
+  const send = (payload) => {
+    const { ephemeral, ...messagePayload } = typeof payload === 'string' ? { content: payload } : payload;
+    return message.reply(messagePayload);
+  };
+
+  return {
+    guild: message.guild,
+    guildId: message.guild.id,
+    channel: message.channel,
+    client: message.client,
+    user: message.author,
+    member: message.member,
+    memberPermissions: message.member.permissions,
+    get deferred() { return deferred; },
+    options: {
+      getSubcommand: () => subcommand,
+      getSubcommandGroup: () => group,
+      getUser: (name) => resolveUser(values[name]),
+      getRole: (name) => resolveRole(values[name]),
+      getChannel: (name) => resolveChannel(values[name]),
+      getString: (name) => values[name] ?? null,
+      getInteger: (name) => {
+        const value = Number.parseInt(values[name], 10);
+        return Number.isInteger(value) ? value : null;
+      },
+    },
+    reply: send,
+    deferReply: async () => { deferred = true; },
+    editReply: send,
+  };
 }
 
 function isTicketStaff(member, config) {
@@ -227,9 +307,18 @@ async function runModeration(interaction, action) {
   }
 
   if (action === 'avatar' || action === 'cover') {
-    const user = interaction.options.getUser('member') || interaction.user;
+    const selectedUser = interaction.options.getUser('member') || interaction.user;
+    if (action === 'cover') {
+      await interaction.deferReply({ ephemeral: true });
+      const user = await interaction.client.users.fetch(selectedUser.id, { force: true }).catch(() => selectedUser);
+      const embed = buildUserCardEmbed(user, action);
+      await interaction.editReply(embed.image
+        ? { embeds: [embed] }
+        : { content: `${user.username || 'This user'} does not have a banner photo.` });
+      return;
+    }
     await interaction.reply({
-      embeds: [buildUserCardEmbed(user, action)],
+      embeds: [buildUserCardEmbed(selectedUser, action)],
       ephemeral: true,
     });
     return;
@@ -534,13 +623,36 @@ async function handleTicketMessage(message) {
     return true;
   }
 
-  if (!['transcript', 'close'].includes(action)) {
-    await message.reply('Ticket commands: `,ticket setup`, `,ticket panel`, `,ticket logs`, `,ticket transcript`, `,ticket close`.');
+  if (action === 'create') {
+    if (!isTicketStaff(message.member, config)) {
+      await message.reply('Only support staff can create a ticket for another member.');
+      return true;
+    }
+    const userId = args[0]?.match(/^(?:<@!?(\d+)>|(\d+))$/)?.slice(1).find(Boolean);
+    const user = userId && (message.mentions.users.get(userId)
+      || message.guild.members.cache.get(userId)?.user
+      || message.client.users.cache.get(userId));
+    if (!user) {
+      await message.reply('Usage: `,ticket create @member`');
+      return true;
+    }
+    const result = await createTicketChannel(message.guild, user, config);
+    await message.reply(result.alreadyOpen
+      ? `${user.tag} already has an open ticket: <#${result.channel.id}>`
+      : `Ticket created: <#${result.channel.id}>`);
     return true;
   }
 
-  const ownerId = message.channel.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
-  if (!ownerId || message.channel.parentId !== config.categoryId) {
+  if (!['transcript', 'close'].includes(action)) {
+    await message.reply('Ticket commands: `,ticket setup`, `,ticket panel`, `,ticket logs`, `,ticket create @member`, `,ticket transcript`, `,ticket close [#channel]`.');
+    return true;
+  }
+
+  const targetChannel = action === 'close' && args[0]
+    ? message.guild.channels.cache.get(getMentionedId(args[0], 'channel'))
+    : message.channel;
+  const ownerId = targetChannel?.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
+  if (!ownerId || targetChannel.parentId !== config.categoryId) {
     await message.reply('Use this command inside a ticket channel.');
     return true;
   }
@@ -549,12 +661,12 @@ async function handleTicketMessage(message) {
     return true;
   }
   if (action === 'transcript') {
-    const logChannel = await sendTicketTranscript(message.channel, config);
+    const logChannel = await sendTicketTranscript(targetChannel, config);
     await message.reply(`Transcript uploaded to <#${logChannel.id}>.`);
     return true;
   }
 
-  await closeTicketChannel(message.channel, config, message.author.tag);
+  await closeTicketChannel(targetChannel, config, message.author.tag);
   return true;
 }
 
@@ -661,6 +773,212 @@ async function runAntinuke(interaction) {
   await interaction.reply({ content: `${status}\n${checks}${allLists}`, ephemeral: true });
 }
 
+async function handlePrefixWelcome(message, command) {
+  const { name, args, rawArgs } = command;
+  const hasManageGuild = message.member.permissions.has(PermissionFlagsBits.ManageGuild);
+  if (!hasManageGuild) {
+    await message.reply('You need the Manage Server permission to configure welcome messages.');
+    return true;
+  }
+
+  if (name === 'set-welcome-channel' || (name === 'welcome' && args[0] === 'channel')) {
+    const token = name === 'welcome' ? args[1] : args[0];
+    const channel = token && message.guild.channels.cache.get(getMentionedId(token, 'channel'));
+    if (!channel?.isTextBased?.() || channel.isThread?.()) {
+      await message.reply('Usage: `,welcome channel #text-channel`');
+      return true;
+    }
+    welcomeStore.update(message.guild.id, { channelId: channel.id, enabled: true });
+    await message.reply(`Welcome messages are enabled in <#${channel.id}>.`);
+    return true;
+  }
+
+  if (name === 'set-welcome-message' || (name === 'welcome' && args[0] === 'message')) {
+    const value = name === 'welcome' ? args.slice(1).join(' ') : rawArgs;
+    const messageText = value.replace(/^("([\s\S]*)"|'([\s\S]*)')$/, '$2$3').trim();
+    if (!messageText || messageText.length > 2000) {
+      await message.reply('Provide a welcome message up to 2,000 characters.');
+      return true;
+    }
+    welcomeStore.update(message.guild.id, { message: messageText });
+    await message.reply('Welcome message updated.');
+    return true;
+  }
+
+  if (name === 'edit-embed' || (name === 'welcome' && args[0] === 'embed' && args[1] === 'edit')) {
+    await message.channel.send({
+      content: 'Choose an embed section to edit:',
+      components: [welcomeInteractions.buildEmbedEditorMenu()],
+    });
+    return true;
+  }
+
+  if (name === 'welcome' && args[0] === 'embed' && args[1] === 'clear') {
+    const field = args[2] || null;
+    const update = welcome.parseEmbedUpdate('clear', field);
+    if (!update) {
+      await message.reply('Choose a valid embed field: title, description, color, footer, author, image, or thumbnail.');
+      return true;
+    }
+    welcomeStore.update(message.guild.id, { embed: update });
+    await message.reply(field ? `Welcome embed field \`${field}\` cleared.` : 'Welcome embed cleared.');
+    return true;
+  }
+
+  if (name === 'welcome' && args[0] === 'disable') {
+    welcomeStore.update(message.guild.id, { enabled: false });
+    await message.reply('Welcome messages are disabled.');
+    return true;
+  }
+
+  if (name === 'welcome' && args[0] === 'status') {
+    const config = welcomeStore.getConfig(message.guild.id);
+    await message.reply(`Welcome messages are ${config.enabled ? 'enabled' : 'disabled'}; channel: ${config.channelId ? `<#${config.channelId}>` : 'not set'}.`);
+    return true;
+  }
+
+  if (name === 'welcome' && args[0] === 'preview') {
+    const payload = welcome.buildPayload(welcomeStore.getConfig(message.guild.id), message.member);
+    if (!payload.content && payload.embeds.length === 0) {
+      await message.reply('Set a welcome message or embed content before previewing.');
+      return true;
+    }
+    await message.channel.send(payload);
+    await message.reply('Welcome preview sent.');
+    return true;
+  }
+
+  return false;
+}
+
+async function handlePrefixCommand(message) {
+  if (!message.guild || message.author.bot) return false;
+  const command = parsePrefixCommand(message.content);
+  if (!command) return false;
+  if (command.name === 'ticket') return handleTicketMessage(message);
+
+  const { name, args } = command;
+  if (name === 'help') {
+    await message.reply({ embeds: [buildHelpEmbed()] });
+    return true;
+  }
+  if (['welcome', 'set-welcome-channel', 'set-welcome-message', 'edit-embed'].includes(name)) {
+    const handled = await handlePrefixWelcome(message, command);
+    if (handled) return true;
+  }
+  if (name === 'afk') {
+    const reason = command.rawArgs.trim() || 'AFK';
+    const member = message.member;
+    const originalNickname = member?.nickname || member?.user?.username || null;
+    afkStore.set(message.guild.id, message.author.id, reason, originalNickname);
+    if (member && typeof member.setNickname === 'function') {
+      await require('./afk').applyAfkNickname(member);
+    }
+    await message.reply({ embeds: [buildAfkEmbed(reason)] });
+    return true;
+  }
+
+  if (name === 'set') {
+    const action = args[0]?.toLowerCase();
+    const value = args[1] || null;
+    const roleRequired = action === 'jail-role';
+    const resolved = roleRequired
+      ? getMentionedId(value || '', 'role') && message.guild.roles.cache.get(getMentionedId(value || '', 'role'))
+      : getMentionedId(value || '', 'channel') && message.guild.channels.cache.get(getMentionedId(value || '', 'channel'));
+    if (!['logs', 'temp-voice', 'jail-role'].includes(action)
+      || (roleRequired && !resolved)
+      || (value && !resolved)) {
+      await message.reply('Usage: `,set logs [#channel]`, `,set temp-voice [#voice-channel]`, or `,set jail-role @role`');
+      return true;
+    }
+    const interaction = createPrefixInteraction(message, {
+      subcommand: action,
+      values: { channel: roleRequired ? null : value, role: roleRequired ? value : null },
+    });
+    await runSet(interaction);
+    return true;
+  }
+
+  if (name === 'role') {
+    if (args[0]?.toLowerCase() !== 'add' || !args[1] || !args[2]) {
+      await message.reply('Usage: `,role add @member @role`');
+      return true;
+    }
+    await runRole(createPrefixInteraction(message, {
+      subcommand: 'add',
+      values: { member: args[1], role: args[2] },
+    }));
+    return true;
+  }
+
+  if (MODERATION_PERMISSIONS[name] || ['avatar', 'cover'].includes(name)) {
+    const values = { member: args[0] || null };
+    if (name === 'purge') values.amount = args[0] || null;
+    if (name === 'timeout') {
+      values.duration = args[1] || null;
+      values.reason = args.slice(2).join(' ') || null;
+    } else if (['kick', 'ban', 'mute'].includes(name)) {
+      values.reason = args.slice(1).join(' ') || null;
+    }
+    const requiresMember = ['kick', 'ban', 'timeout', 'mute', 'jail', 'unjail'].includes(name);
+    if (requiresMember && !createPrefixInteraction(message, { values }).options.getUser('member')) {
+      await message.reply(`Usage: \,${name} @member${name === 'timeout' ? ' 10m [reason]' : ' [reason]'}`);
+      return true;
+    }
+    await runModeration(createPrefixInteraction(message, { values }), name);
+    return true;
+  }
+
+  if (name === 'autoresponder') {
+    const action = args[0]?.toLowerCase();
+    if (!['add', 'remove', 'list'].includes(action)) {
+      await message.reply('Usage: `,autoresponder add trigger response`, `,autoresponder remove trigger`, or `,autoresponder list`');
+      return true;
+    }
+    const trigger = args[1] || null;
+    const response = args.slice(2).join(' ') || null;
+    if ((action === 'add' && (!trigger || !response)) || (action === 'remove' && !trigger)) {
+      await message.reply('Usage: `,autoresponder add trigger response` or `,autoresponder remove trigger`');
+      return true;
+    }
+    await runAutoresponder(createPrefixInteraction(message, {
+      subcommand: action,
+      values: { trigger, response },
+    }));
+    return true;
+  }
+
+  if (name === 'antinuke') {
+    let action = args[0]?.toLowerCase() || 'status';
+    let group = null;
+    let target = null;
+    if (action.startsWith('whitelist-role') || action.startsWith('whitelist-category') || action.startsWith('whitelist-channel')) {
+      group = action;
+      action = args[1]?.toLowerCase() || 'list';
+      target = args[2] || null;
+    }
+    const targetType = group?.slice('whitelist-'.length);
+    if (!['enable', 'disable', 'status', 'set-punishment', 'whitelist-list', 'add', 'remove', 'list'].includes(action)
+      || ((action === 'add' || action === 'remove') && !target)) {
+      await message.reply('Use `,antinuke status`, `enable`, `disable`, `set-punishment <type>`, or `whitelist-role|category|channel add|remove|list <target>`.');
+      return true;
+    }
+    await runAntinuke(createPrefixInteraction(message, {
+      subcommand: action,
+      group,
+      values: {
+        punishment: group ? null : args[1] || null,
+        role: targetType === 'role' ? target : null,
+        channel: ['category', 'channel'].includes(targetType) ? target : null,
+      },
+    }));
+    return true;
+  }
+
+  await message.reply(`Unknown command. Use \,help. Slash commands remain available too.`);
+  return true;
+}
+
 async function handleCommand(interaction) {
   const name = interaction.commandName;
   if (name === 'help') {
@@ -684,7 +1002,7 @@ async function handleCommand(interaction) {
       const afk = require('./afk');
       await afk.applyAfkNickname(member);
     }
-    await interaction.reply({ content: `You are now AFK: ${reason}`, ephemeral: true });
+    await interaction.reply({ embeds: [buildAfkEmbed(reason)], ephemeral: true });
     return true;
   }
   if (name === 'autoresponder') {
@@ -699,11 +1017,6 @@ async function handleCommand(interaction) {
     await runAntinuke(interaction);
     return true;
   }
-  if (name === 'mod') {
-    const selected = interaction.options.getSubcommand();
-    await runModeration(interaction, selected === 'av' ? 'avatar' : selected);
-    return true;
-  }
   if (MODERATION_PERMISSIONS[name] || ['avatar', 'cover'].includes(name)) {
     await runModeration(interaction, name);
     return true;
@@ -714,4 +1027,7 @@ async function handleCommand(interaction) {
 module.exports = handleCommand;
 module.exports.handleTicketButton = handleTicketButton;
 module.exports.handleTicketMessage = handleTicketMessage;
+module.exports.handlePrefixCommand = handlePrefixCommand;
+module.exports.parsePrefixCommand = parsePrefixCommand;
+module.exports.buildAfkEmbed = buildAfkEmbed;
 module.exports.parseTicketMessage = parseTicketMessage;

@@ -1,6 +1,6 @@
 # SINCLAIR
 
-A Discord.js bot for server moderation, safety, welcome messages, and automation. Bot commands are Discord slash commands.
+A Discord.js bot for server moderation, safety, welcome messages, and automation. Commands are available as Discord slash commands and with the `,` text prefix.
 
 ## Requirements
 
@@ -14,7 +14,9 @@ A Discord.js bot for server moderation, safety, welcome messages, and automation
 3. Enable the **Message Content Intent** and **Server Members Intent** for the bot.
 4. Invite the bot with the permissions it needs, then start it with `npm start`.
 
-Slash commands are registered in each server when the bot starts and when it joins a server. Command changes are applied on the next start.
+Slash commands are registered in each server when the bot starts and when it joins a server. Comma-prefixed text commands are also available; command changes are applied on the next start.
+
+Use the comma prefix as an alias for the slash command families, for example `,kick @member reason`, `,role add @member @role`, `,welcome status`, `,antinuke status`, and `,autoresponder list`. Existing slash commands remain available. Run `,help` for both forms and the argument syntax.
 
 ## Server Setup
 
@@ -43,7 +45,7 @@ Moderation commands include `/kick`, `/ban`, `/timeout`, `/mute`, `/purge`, `/ja
 /role add member:@member role:@Role
 ```
 
-The same actions are available under `/mod` subcommands where applicable. Role assignment requires **Manage Roles** for both the command user and bot, with the bot's highest role above the target member and selected role. You can select a member by mention or user picker.
+Each moderation action has its own slash command; there is no duplicate `/mod` command group. Role assignment requires **Manage Roles** for both the command user and bot, with the bot's highest role above the target member and selected role. You can select a member by mention or user picker.
 
 Configure the jail role with `/set jail-role role:@Jailed`. Jailing removes the member's assigned roles and applies the jail role; unjailing removes that role and restores saved roles that still exist. Role snapshots and the configured jail role are stored in `data/guild-jails.json`. Configure the jail role's channel permissions separately.
 
@@ -67,7 +69,7 @@ Set transcript delivery with `,ticket logs #transcript-channel`; transcripts are
 
 ## Antinuke
 
-Antinuke is disabled by default. Members with **Manage Server** can configure it with `/antinuke enable`, `/antinuke disable`, and `/antinuke status`. New configurations default to removing all manageable roles after one matching action. Choose another response with `/antinuke set-punishment`, using `remove-roles`, `timeout`, `kick`, `ban`, or `none`. Existing servers keep their saved punishment until changed.
+Antinuke is disabled by default. Members with **Manage Server** can configure it with `/antinuke enable`, `/antinuke disable`, and `/antinuke status`. The threshold is one matching action within a 10-second window; the punishment is applied on the first matching action. New configurations default to removing all manageable roles. Choose another response with `/antinuke set-punishment`, using `remove-roles`, `timeout`, `kick`, `ban`, or `none`. Existing servers keep their saved punishment until changed.
 
 Whitelist actors and targets with the `/antinuke whitelist-role`, `/antinuke whitelist-category`, and `/antinuke whitelist-channel` command groups. Each group provides `add`, `remove`, and `list` subcommands. `/antinuke whitelist-list` shows all exemptions.
 

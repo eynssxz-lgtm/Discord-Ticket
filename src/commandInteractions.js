@@ -14,6 +14,18 @@ const MODERATION_PERMISSIONS = {
   unjail: PermissionFlagsBits.ManageRoles,
 };
 
+const MODERATION_DESCRIPTIONS = {
+  kick: 'Kick a member',
+  ban: 'Ban a member',
+  timeout: 'Timeout a member',
+  mute: 'Mute a member for 10 minutes',
+  purge: 'Delete recent messages',
+  jail: 'Jail a member',
+  unjail: 'Unjail a member',
+  avatar: 'Show a member avatar',
+  cover: 'Show a member banner photo',
+};
+
 function addModerationOptions(subcommand, action) {
   if (['kick', 'ban', 'timeout', 'mute', 'jail', 'unjail'].includes(action)) {
     subcommand.addUserOption((option) => option
@@ -59,7 +71,7 @@ function addModerationOptions(subcommand, action) {
 function buildModerationCommand(action) {
   const command = new SlashCommandBuilder()
     .setName(action)
-    .setDescription(`Run the ${action} command`);
+    .setDescription(MODERATION_DESCRIPTIONS[action] || `Run the ${action} command`);
   if (MODERATION_PERMISSIONS[action]) {
     command.setDefaultMemberPermissions(MODERATION_PERMISSIONS[action]);
   }
@@ -97,27 +109,8 @@ function getCommands() {
           .setName('role')
           .setDescription('Role to assign to jailed members')
           .setRequired(true))),
-    new SlashCommandBuilder()
-      .setName('mod')
-      .setDescription('Run a moderation action')
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('kick').setDescription('Kick a member'), 'kick'))
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('ban').setDescription('Ban a member'), 'ban'))
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('timeout').setDescription('Timeout a member'), 'timeout'))
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('mute').setDescription('Mute a member for 10 minutes'), 'mute'))
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('purge').setDescription('Delete recent messages'), 'purge'))
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('jail').setDescription('Jail a member'), 'jail'))
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('unjail').setDescription('Unjail a member'), 'unjail'))
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('av').setDescription('Show a member avatar'), 'avatar'))
-      .addSubcommand((subcommand) => addModerationOptions(subcommand
-        .setName('cover').setDescription('Show a member cover'), 'cover')),
+    ...['kick', 'ban', 'timeout', 'mute', 'purge', 'jail', 'unjail', 'avatar', 'cover']
+      .map(buildModerationCommand),
     new SlashCommandBuilder()
       .setName('ticket')
       .setDescription('Manage support tickets')
@@ -230,30 +223,37 @@ function buildHelpEmbed() {
   return {
     color: 0x5865f2,
     title: 'SINCLAIR Commands',
-    description: 'Legacy text prefix: `,` — examples: `,help`, `,afk reason`, `,set logs #mod-logs`',
+    description: 'Commands work as slash commands or with the `,` prefix. Examples: `,help`, `,afk reason`, `,set logs #mod-logs`.',
     fields: [
       {
         name: 'General & setup',
         value: [
-          '`/help`', '`/afk [reason]`',
+          '`/help` / `,help`', '`/afk [reason]` / `,afk [reason]`',
           '`/set logs [channel]`', '`/set temp-voice [channel]`',
           '`/set jail-role role`', '`/set-welcome-channel channel`',
           '`/set-welcome-message message`', '`/edit-embed`',
+          '`,set logs [#channel]`', '`,set temp-voice [#voice-channel]`',
+          '`,set jail-role @role`', '`,set-welcome-channel #channel`',
+          '`,set-welcome-message text`', '`,edit-embed`',
         ].join('\n'),
       },
       {
         name: 'Roles',
         value: [
-          '`/role add member role`',
-          '`/role add @member @role`',
+          '`/role add member role` / `,role add @member @role`',
         ].join('\n'),
       },
       {
         name: 'Moderation',
         value: [
-          '`/mod kick|ban|timeout|mute|purge|jail|unjail|av|cover`',
-          '`/jail member`', '`/unjail member`',
-          '`/role add member role`',
+          '`/kick member [reason]`', '`/ban member [reason]`',
+          '`/timeout member [duration] [reason]`', '`/mute member [reason]`',
+          '`/purge [amount]`', '`/jail member`', '`/unjail member`',
+          '`/avatar [member]`', '`/cover [member]`',
+          '`,kick @member [reason]`', '`,ban @member [reason]`',
+          '`,timeout @member 10m [reason]`', '`,mute @member [reason]`',
+          '`,purge [amount]`', '`,jail @member`', '`,unjail @member`',
+          '`,avatar [@member]`', '`,cover [@member]`',
         ].join('\n'),
       },
       {
@@ -261,7 +261,7 @@ function buildHelpEmbed() {
         value: [
           '`,ticket setup #tickets @Support [#panel]`',
           '`,ticket panel [#channel]`', '`,ticket logs #transcripts`',
-          '`,ticket transcript`', '`,ticket close`',
+          '`,ticket create @member`', '`,ticket transcript`', '`,ticket close [#channel]`',
           '`/ticket create member:@user`', '`/ticket close [channel]`',
         ].join('\n'),
       },
@@ -271,6 +271,8 @@ function buildHelpEmbed() {
           '`/autoresponder add trigger response`',
           '`/autoresponder remove trigger`',
           '`/autoresponder list`',
+          '`,autoresponder add trigger response`',
+          '`,autoresponder remove trigger`', '`,autoresponder list`',
         ].join('\n'),
       },
       {
@@ -282,6 +284,9 @@ function buildHelpEmbed() {
           '`/antinuke whitelist-role add|remove|list role`',
           '`/antinuke whitelist-category add|remove|list channel`',
           '`/antinuke whitelist-channel add|remove|list channel`',
+          '`,antinuke enable|disable|status`',
+          '`,antinuke set-punishment type`',
+          '`,antinuke whitelist-role|category|channel add|remove|list target`',
         ].join('\n'),
       },
       {
@@ -290,6 +295,8 @@ function buildHelpEmbed() {
           '`/welcome channel channel`', '`/welcome message message`',
           '`/welcome status`', '`/welcome disable`', '`/welcome preview`',
           '`/welcome embed edit`', '`/welcome embed clear [field]`',
+          '`,welcome channel #channel`', '`,welcome message text`',
+          '`,welcome status|disable|preview`', '`,welcome embed edit|clear [field]`',
         ].join('\n'),
       },
     ],

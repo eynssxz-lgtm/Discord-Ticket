@@ -62,8 +62,8 @@ function buildUserCardEmbed(member, kind = 'avatar') {
 
   return {
     color: 0x5865f2,
-    title: `${username}'s ${kind === 'cover' ? 'cover' : 'avatar'}`,
-    thumbnail: avatarUrl ? { url: avatarUrl } : undefined,
+    title: `${username}'s ${kind === 'cover' ? 'banner photo' : 'avatar'}`,
+    thumbnail: kind !== 'cover' && avatarUrl ? { url: avatarUrl } : undefined,
     image: imageUrl ? { url: imageUrl } : undefined,
     footer: { text: user.id || 'Unknown ID' },
   };

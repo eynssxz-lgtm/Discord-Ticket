@@ -33,7 +33,7 @@ const DANGEROUS_PERMISSIONS = [
   'MentionEveryone',
 ].map((name) => PermissionsBitField.Flags[name]).filter((flag) => flag !== undefined);
 const THRESHOLD = 1;
-const WINDOW_MS = 1_000;
+const WINDOW_MS = 10_000;
 const DELETED_CHANNEL_TTL_MS = 20_000;
 const TIMEOUT_MS = 10 * 60 * 1000;
 const PUNISHMENTS = ['remove-roles', 'timeout', 'kick', 'ban', 'none'];

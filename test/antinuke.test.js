@@ -119,9 +119,9 @@ test('reports missing gateway intent and permissions for antinuke setup', () => 
   });
 });
 
-test('uses an immediate action threshold and ten-minute timeout', () => {
+test('uses one matching action within ten seconds and a ten-minute timeout', () => {
   assert.equal(THRESHOLD, 1);
-  assert.equal(WINDOW_MS, 1_000);
+  assert.equal(WINDOW_MS, 10_000);
   assert.equal(TIMEOUT_MS, 600_000);
 });
 
@@ -170,7 +170,7 @@ test('punishes and logs after one matching audit action', async () => {
   assert.equal(logs.length, 1);
   assert.equal(logs[0][0], 'guild-id');
   assert.match(logs[0][1], /role-delete/);
-  assert.match(logs[0][1], /1 matching action within 1 second/);
+  assert.match(logs[0][1], /1 matching action within 10 seconds/);
   assert.match(logs[0][1], /moderator-id/);
   assert.match(logs[0][1], /applied kick/);
 });

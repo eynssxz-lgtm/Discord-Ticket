@@ -48,4 +48,6 @@ test('builds an avatar or cover embed with the correct image source', () => {
 
   const coverEmbed = buildUserCardEmbed(member, 'cover');
   assert.equal(coverEmbed.image.url, 'https://cdn.example.com/cover.png');
+  assert.equal(coverEmbed.thumbnail, undefined);
+  assert.match(coverEmbed.title, /banner photo/);
 });

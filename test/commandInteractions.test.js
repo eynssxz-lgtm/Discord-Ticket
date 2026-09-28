@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { getCommands, buildHelpEmbed } = require('../src/commandInteractions');
-const { parseTicketMessage } = require('../src/commandHandler');
+const { buildAfkEmbed, parsePrefixCommand, parseTicketMessage } = require('../src/commandHandler');
 const welcomeInteractions = require('../src/welcomeInteractions');
 
 test('parses comma-prefixed ticket commands and ignores other messages', () => {
@@ -17,12 +17,34 @@ test('parses comma-prefixed ticket commands and ignores other messages', () => {
   assert.equal(parseTicketMessage('ticket setup #tickets @Support'), null);
 });
 
+test('parses comma-prefixed aliases for regular slash command families', () => {
+  assert.deepEqual(parsePrefixCommand(',timeout @member 10m "breaking rules"'), {
+    name: 'timeout',
+    rawArgs: '@member 10m "breaking rules"',
+    args: ['@member', '10m', 'breaking rules'],
+  });
+  assert.deepEqual(parsePrefixCommand(',welcome embed clear title'), {
+    name: 'welcome',
+    rawArgs: 'embed clear title',
+    args: ['embed', 'clear', 'title'],
+  });
+  assert.equal(parsePrefixCommand('/timeout member:@member duration:10m'), null);
+});
+
+test('builds the AFK confirmation as an embed containing the reason', () => {
+  const embed = buildAfkEmbed('Away for lunch');
+  assert.equal(embed.title, 'You are now AFK');
+  assert.equal(embed.description, 'Away for lunch');
+  assert.match(embed.footer.text, /clears when you send a message/);
+});
+
 test('registers slash commands for every supported command family', () => {
   const commands = [...welcomeInteractions.getCommands(), ...getCommands()];
   const commandNames = commands.map(({ name }) => name);
   assert.deepEqual(commandNames, [
     'edit-embed', 'set-welcome-channel', 'set-welcome-message', 'welcome', 'help', 'set',
-    'mod', 'ticket', 'role', 'afk', 'autoresponder', 'antinuke',
+    'kick', 'ban', 'timeout', 'mute', 'purge', 'jail', 'unjail', 'avatar', 'cover',
+    'ticket', 'role', 'afk', 'autoresponder', 'antinuke',
   ]);
 
   const setCommand = commands.find(({ name }) => name === 'set');
@@ -58,8 +80,16 @@ test('help lists the supported command families and ticket setup', () => {
   assert.match(text, /`,ticket setup #tickets @Support \[#panel\]`/);
   assert.match(text, /`,ticket panel \[#channel\]`/);
   assert.match(text, /`,ticket logs #transcripts`/);
+  assert.match(text, /`,ticket create @member`/);
   assert.match(text, /`,ticket transcript`/);
+  assert.match(text, /`,timeout @member 10m \[reason\]`/);
+  assert.match(text, /`,autoresponder add trigger response`/);
+  assert.match(text, /`,antinuke enable\|disable\|status`/);
+  assert.match(text, /`,welcome status\|disable\|preview`/);
   assert.doesNotMatch(text, /`\/ticket setup/);
-  assert.match(text, /`\/mod kick\|ban\|timeout\|mute\|purge\|jail\|unjail\|av\|cover`/);
+  assert.match(text, /`\/kick member \[reason\]`/);
+  assert.match(text, /`\/cover \[member\]`/);
+  assert.equal((text.match(/`\/jail member`/g) || []).length, 1);
+  assert.doesNotMatch(text, /`\/mod\b/);
   assert.doesNotMatch(text, /!/);
 });
