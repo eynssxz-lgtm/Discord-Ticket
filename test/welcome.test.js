@@ -9,7 +9,9 @@ const {
 } = require('../src/welcome');
 const {
   EMBED_MODAL_ID,
+  EMBED_EDITOR_MENU_ID,
   getCommands,
+  buildEmbedEditorMenu,
   buildEmbedModal,
   parseModalValues,
 } = require('../src/welcomeInteractions');
@@ -56,7 +58,7 @@ test('formats member and server placeholders and builds mention-safe embed paylo
   assert.deepEqual(payload.allowedMentions, { users: ['42'], roles: [], parse: [] });
 });
 
-test('registers welcome slash commands and builds a prefilled embed modal', () => {
+test('registers welcome commands and provides grouped embed editing sections', () => {
   assert.deepEqual(getCommands().map(({ name }) => name), [
     'edit-embed',
     'set-welcome-channel',
@@ -67,26 +69,35 @@ test('registers welcome slash commands and builds a prefilled embed modal', () =
   assert.deepEqual(welcomeCommand.options.map(({ name }) => name), [
     'channel', 'message', 'status', 'disable', 'preview', 'embed',
   ]);
-  const modal = buildEmbedModal({ title: 'Welcome!', color: '#36a2eb' }).toJSON();
-  assert.equal(modal.custom_id, EMBED_MODAL_ID);
-  assert.equal(modal.title, 'Edit Embed');
-  assert.equal(modal.components.length, 5);
+  const menu = buildEmbedEditorMenu().toJSON();
+  assert.equal(menu.components[0].custom_id, EMBED_EDITOR_MENU_ID);
+  assert.deepEqual(menu.components[0].options.map(({ label }) => label), [
+    'Edit basic information', 'Edit author', 'Edit footer', 'Edit images',
+  ]);
+  const modal = buildEmbedModal('basic', { title: 'Welcome!', color: '#36a2eb' }).toJSON();
+  assert.equal(modal.custom_id, `${EMBED_MODAL_ID}:basic`);
+  assert.equal(modal.title, 'Edit Basic Information');
+  assert.equal(modal.components.length, 3);
   assert.equal(modal.components[0].components[0].value, 'Welcome!');
+  assert.equal(buildEmbedModal('author', { author: 'SINCLAIR' }).toJSON().components[0].components[0].value, 'SINCLAIR');
+  assert.equal(buildEmbedModal('footer', { footer: 'Welcome' }).toJSON().components.length, 1);
+  assert.equal(buildEmbedModal('images', { thumbnail: 'https://example.com/thumb.png' }).toJSON().components.length, 2);
 });
 
 test('validates modal values and clears blank optional embed fields', () => {
-  assert.deepEqual(parseModalValues({
+  assert.deepEqual(parseModalValues('basic', {
     title: 'Welcome',
     description: 'Hello {username}',
     color: '#36a2eb',
-    footer: '',
-    image: 'https://example.com/welcome.png',
   }), {
     title: 'Welcome',
     description: 'Hello {username}',
     color: '#36a2eb',
-    footer: null,
-    image: 'https://example.com/welcome.png',
   });
-  assert.equal(parseModalValues({ title: '', description: '', color: 'blue', footer: '', image: '' }), null);
+  assert.deepEqual(parseModalValues('images', {
+    image: 'https://example.com/welcome.png',
+    thumbnail: '',
+  }), { image: 'https://example.com/welcome.png', thumbnail: null });
+  assert.deepEqual(parseModalValues('author', { author: '' }), { author: null });
+  assert.equal(parseModalValues('basic', { title: '', description: '', color: 'blue' }), null);
 });

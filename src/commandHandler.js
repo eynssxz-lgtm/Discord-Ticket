@@ -2,6 +2,7 @@ const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const autoresponder = require('./autoresponder');
 const autoresponderStore = require('./autoresponderStore');
 const antinukeStore = require('./antinukeStore');
+const { THRESHOLD, WINDOW_MS } = require('./antinuke');
 const jailStore = require('./jailStore');
 const logChannelStore = require('./logChannelStore');
 const tempVoiceStore = require('./tempVoiceStore');
@@ -280,7 +281,7 @@ async function runAntinuke(interaction) {
 
   const config = antinukeStore.getConfig(interaction.guildId);
   const punishment = config.punishment === 'timeout' ? '10-minute timeout' : config.punishment;
-  const status = `Antinuke is ${config.enabled ? 'enabled' : 'disabled'}. Threshold: 3 matching actions within 10 seconds; punishment: ${punishment}.`;
+  const status = `Antinuke is ${config.enabled ? 'enabled' : 'disabled'}. Threshold: ${THRESHOLD} matching actions within ${WINDOW_MS / 1000} second; punishment: ${punishment}.`;
   const allLists = action === 'whitelist-list'
     ? `\nRoles: ${config.roleIds.length ? config.roleIds.map((id) => `<@&${id}>`).join(', ') : 'none'}\nCategories: ${config.categoryIds.length ? config.categoryIds.map((id) => `<#${id}>`).join(', ') : 'none'}\nChannels: ${config.channelIds.length ? config.channelIds.map((id) => `<#${id}>`).join(', ') : 'none'}`
     : '';

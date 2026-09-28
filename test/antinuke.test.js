@@ -1,12 +1,17 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AuditLogEvent } = require('discord.js');
+const { AuditLogEvent, PermissionsBitField } = require('discord.js');
 const {
   parseSnowflake,
   getActionGroup,
+  containsDangerousPermission,
+  hasDangerousPermissionGrant,
+  hasDangerousRoleAssignment,
+  isMonitoredEntry,
   isWhitelistedTarget,
   hasWhitelistedRole,
   applyPunishment,
+  attach,
   THRESHOLD,
   WINDOW_MS,
   TIMEOUT_MS,
@@ -25,7 +30,52 @@ test('groups destructive audit actions for threshold counting', () => {
   assert.equal(getActionGroup(AuditLogEvent.MemberKick), 'member-removal');
   assert.equal(getActionGroup(AuditLogEvent.ChannelDelete), 'channel-delete');
   assert.equal(getActionGroup(AuditLogEvent.RoleDelete), 'role-delete');
+  assert.equal(getActionGroup(AuditLogEvent.RoleCreate), 'role-create');
+  assert.equal(getActionGroup(AuditLogEvent.MemberPrune), 'member-prune');
+  assert.equal(getActionGroup(AuditLogEvent.InviteCreate), 'invite-create');
+  assert.equal(getActionGroup(AuditLogEvent.ChannelOverwriteUpdate), 'dangerous-permission-grant');
+  assert.equal(getActionGroup(AuditLogEvent.MemberRoleUpdate), 'dangerous-role-assignment');
   assert.equal(getActionGroup(AuditLogEvent.MessageDelete), null);
+});
+
+test('detects dangerous permission grants but ignores removals and harmless edits', () => {
+  const admin = PermissionsBitField.Flags.Administrator;
+  assert.equal(containsDangerousPermission(admin), true);
+  assert.equal(hasDangerousPermissionGrant({
+    changes: [{ key: 'permissions', old: '0', new: admin.toString() }],
+  }), true);
+  assert.equal(hasDangerousPermissionGrant({
+    changes: [{ key: 'permissions', old: admin.toString(), new: '0' }],
+  }), false);
+  assert.equal(hasDangerousPermissionGrant({
+    changes: [{ key: 'permissions', old: '0', new: '0' }],
+  }), false);
+  assert.equal(hasDangerousPermissionGrant({
+    changes: [{ key: 'name', old: 'Members', new: 'Staff' }],
+  }), false);
+});
+
+test('detects assignment of dangerous roles but ignores ordinary role assignments', () => {
+  const guild = {
+    roles: {
+      cache: new Map([
+        ['admin-role', { permissions: new PermissionsBitField(PermissionsBitField.Flags.Administrator) }],
+        ['member-role', { permissions: new PermissionsBitField(0n) }],
+      ]),
+    },
+  };
+  const dangerousAssignment = {
+    action: AuditLogEvent.MemberRoleUpdate,
+    changes: [{ key: '$add', new: [{ id: 'admin-role' }] }],
+  };
+  const ordinaryAssignment = {
+    action: AuditLogEvent.MemberRoleUpdate,
+    changes: [{ key: '$add', new: [{ id: 'member-role' }] }],
+  };
+  assert.equal(hasDangerousRoleAssignment(dangerousAssignment, guild), true);
+  assert.equal(isMonitoredEntry(dangerousAssignment, guild), 'dangerous-role-assignment');
+  assert.equal(hasDangerousRoleAssignment(ordinaryAssignment, guild), false);
+  assert.equal(isMonitoredEntry(ordinaryAssignment, guild), null);
 });
 
 test('matches actor roles and target channel/category exemptions', () => {
@@ -44,8 +94,52 @@ test('matches actor roles and target channel/category exemptions', () => {
 
 test('uses a conservative default action threshold and timeout', () => {
   assert.equal(THRESHOLD, 3);
-  assert.equal(WINDOW_MS, 10_000);
+  assert.equal(WINDOW_MS, 1_000);
   assert.equal(TIMEOUT_MS, 600_000);
+});
+
+test('logs an antinuke incident after three matching actions in one second', async () => {
+  let auditLogHandler;
+  const logs = [];
+  const member = { roles: { cache: new Map() } };
+  const client = {
+    user: { id: 'bot-id' },
+    on: (event, handler) => {
+      if (event === 'guildAuditLogEntryCreate') auditLogHandler = handler;
+    },
+  };
+  const guild = {
+    id: 'guild-id',
+    ownerId: 'owner-id',
+    channels: { cache: new Map() },
+    members: { fetch: async () => member },
+  };
+  const store = {
+    getConfig: () => ({
+      enabled: true,
+      punishment: 'none',
+      roleIds: [],
+      categoryIds: [],
+      channelIds: [],
+    }),
+  };
+  attach(client, store, async (targetGuild, message) => logs.push([targetGuild.id, message]));
+
+  const entry = {
+    action: AuditLogEvent.RoleDelete,
+    executorId: 'moderator-id',
+    targetId: 'role-id',
+  };
+  await auditLogHandler(entry, guild);
+  await auditLogHandler(entry, guild);
+  await auditLogHandler(entry, guild);
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0][0], 'guild-id');
+  assert.match(logs[0][1], /role-delete/);
+  assert.match(logs[0][1], /3 matching actions within 1 second/);
+  assert.match(logs[0][1], /moderator-id/);
+  assert.match(logs[0][1], /no punishment configured/);
 });
 
 test('supports every configured antinuke punishment', async () => {

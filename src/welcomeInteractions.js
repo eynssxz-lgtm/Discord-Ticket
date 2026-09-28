@@ -4,19 +4,39 @@ const {
   ModalBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
 const { parseEmbedUpdate } = require('./welcome');
 
 const EMBED_MODAL_ID = 'sinclair-welcome-embed-edit';
-const MODAL_FIELDS = [
-  { name: 'title', label: 'Title', style: TextInputStyle.Short, maxLength: 256 },
-  { name: 'description', label: 'Description', style: TextInputStyle.Paragraph, maxLength: 4000 },
-  { name: 'color', label: 'Color (hex)', style: TextInputStyle.Short, maxLength: 7 },
-  { name: 'footer', label: 'Footer', style: TextInputStyle.Short, maxLength: 2048 },
-  { name: 'image', label: 'Image URL', style: TextInputStyle.Short, maxLength: 400 },
-];
+const EMBED_EDITOR_MENU_ID = 'sinclair-welcome-embed-editor';
+const MODAL_SECTIONS = {
+  basic: {
+    title: 'Edit Basic Information',
+    fields: [
+      { name: 'title', label: 'Title', style: TextInputStyle.Short, maxLength: 256 },
+      { name: 'description', label: 'Description', style: TextInputStyle.Paragraph, maxLength: 4000 },
+      { name: 'color', label: 'Color (hex)', style: TextInputStyle.Short, maxLength: 7 },
+    ],
+  },
+  author: {
+    title: 'Edit Author',
+    fields: [{ name: 'author', label: 'Author name', style: TextInputStyle.Short, maxLength: 256 }],
+  },
+  footer: {
+    title: 'Edit Footer',
+    fields: [{ name: 'footer', label: 'Footer text', style: TextInputStyle.Short, maxLength: 2048 }],
+  },
+  images: {
+    title: 'Edit Images',
+    fields: [
+      { name: 'image', label: 'Image URL', style: TextInputStyle.Short, maxLength: 400 },
+      { name: 'thumbnail', label: 'Thumbnail URL', style: TextInputStyle.Short, maxLength: 400 },
+    ],
+  },
+};
 
 function getCommands() {
   const manageGuild = PermissionFlagsBits.ManageGuild;
@@ -88,12 +108,31 @@ function getCommands() {
   ].map((command) => command.toJSON());
 }
 
-function buildEmbedModal(embed = {}) {
-  const modal = new ModalBuilder()
-    .setCustomId(EMBED_MODAL_ID)
-    .setTitle('Edit Embed');
+function buildEmbedEditorMenu() {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(EMBED_EDITOR_MENU_ID)
+    .setPlaceholder('Select an embed section')
+    .addOptions(
+      { label: 'Edit basic information', value: 'basic', description: 'Title, description, and color' },
+      { label: 'Edit author', value: 'author', description: 'Author name' },
+      { label: 'Edit footer', value: 'footer', description: 'Footer text' },
+      { label: 'Edit images', value: 'images', description: 'Main image and thumbnail' },
+    );
+  return new ActionRowBuilder().addComponents(menu);
+}
 
-  modal.addComponents(...MODAL_FIELDS.map(({ name, label, style, maxLength }) => {
+function getModalFields(section) {
+  return MODAL_SECTIONS[section]?.fields || null;
+}
+
+function buildEmbedModal(section, embed = {}) {
+  const modalSection = MODAL_SECTIONS[section];
+  if (!modalSection) throw new RangeError(`Unknown embed section: ${section}`);
+  const modal = new ModalBuilder()
+    .setCustomId(`${EMBED_MODAL_ID}:${section}`)
+    .setTitle(modalSection.title);
+
+  modal.addComponents(...modalSection.fields.map(({ name, label, style, maxLength }) => {
     const input = new TextInputBuilder()
       .setCustomId(name)
       .setLabel(label)
@@ -108,9 +147,11 @@ function buildEmbedModal(embed = {}) {
   return modal;
 }
 
-function parseModalValues(values) {
+function parseModalValues(section, values) {
+  const fields = getModalFields(section);
+  if (!fields) return null;
   const updates = {};
-  for (const { name } of MODAL_FIELDS) {
+  for (const { name } of fields) {
     const value = (values[name] || '').trim();
     if (!value) {
       updates[name] = null;
@@ -124,4 +165,12 @@ function parseModalValues(values) {
   return updates;
 }
 
-module.exports = { EMBED_MODAL_ID, getCommands, buildEmbedModal, parseModalValues };
+module.exports = {
+  EMBED_MODAL_ID,
+  EMBED_EDITOR_MENU_ID,
+  getCommands,
+  buildEmbedEditorMenu,
+  getModalFields,
+  buildEmbedModal,
+  parseModalValues,
+};

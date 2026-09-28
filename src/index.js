@@ -31,6 +31,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
@@ -140,9 +141,11 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.commandName === 'edit-embed') {
-      await interaction.showModal(welcomeInteractions.buildEmbedModal(
-        welcomeStore.getConfig(interaction.guildId).embed,
-      ));
+      await interaction.reply({
+        content: 'Choose an embed section to edit:',
+        components: [welcomeInteractions.buildEmbedEditorMenu()],
+        ephemeral: true,
+      });
       return;
     }
     if (interaction.commandName === 'set-welcome-channel') {
@@ -161,9 +164,11 @@ client.on('interactionCreate', async (interaction) => {
     const action = interaction.options.getSubcommand();
     if (interaction.options.getSubcommandGroup(false) === 'embed') {
       if (action === 'edit') {
-        await interaction.showModal(welcomeInteractions.buildEmbedModal(
-          welcomeStore.getConfig(interaction.guildId).embed,
-        ));
+        await interaction.reply({
+          content: 'Choose an embed section to edit:',
+          components: [welcomeInteractions.buildEmbedEditorMenu()],
+          ephemeral: true,
+        });
         return;
       }
       const field = interaction.options.getString('field');
@@ -212,19 +217,37 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  if (interaction.isModalSubmit() && interaction.customId === welcomeInteractions.EMBED_MODAL_ID) {
+  if (interaction.isStringSelectMenu()
+    && interaction.customId === welcomeInteractions.EMBED_EDITOR_MENU_ID) {
+    if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)) {
+      await interaction.reply({ content: 'You need the Manage Server permission to configure welcome messages.', ephemeral: true });
+      return;
+    }
+    await interaction.showModal(welcomeInteractions.buildEmbedModal(
+      interaction.values[0],
+      welcomeStore.getConfig(interaction.guildId).embed,
+    ));
+    return;
+  }
+
+  if (interaction.isModalSubmit()
+    && interaction.customId.startsWith(`${welcomeInteractions.EMBED_MODAL_ID}:`)) {
     if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)) {
       await interaction.reply({ content: 'You need the Manage Server permission to configure welcome messages.', ephemeral: true });
       return;
     }
 
-    const values = Object.fromEntries(
-      ['title', 'description', 'color', 'footer', 'image'].map((name) => [
-        name,
-        interaction.fields.getTextInputValue(name),
-      ]),
-    );
-    const embed = welcomeInteractions.parseModalValues(values);
+    const section = interaction.customId.slice(welcomeInteractions.EMBED_MODAL_ID.length + 1);
+    const fields = welcomeInteractions.getModalFields(section);
+    if (!fields) {
+      await interaction.reply({ content: 'Unknown embed section.', ephemeral: true });
+      return;
+    }
+    const values = Object.fromEntries(fields.map(({ name }) => [
+      name,
+      interaction.fields.getTextInputValue(name),
+    ]));
+    const embed = welcomeInteractions.parseModalValues(section, values);
     if (!embed) {
       await interaction.reply({ content: 'Invalid embed value. Check the color hex code and image URL.', ephemeral: true });
       return;
@@ -255,6 +278,6 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
-antinuke.attach(client, antinukeStore);
+antinuke.attach(client, antinukeStore, sendServerLog);
 
 client.login(token);
