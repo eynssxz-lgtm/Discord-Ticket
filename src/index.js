@@ -17,6 +17,8 @@ const welcomeInteractions = require('./welcomeInteractions');
 const commandInteractions = require('./commandInteractions');
 const commandHandler = require('./commandHandler');
 const tempVoice = require('./tempVoice');
+const afk = require('./afk');
+const afkStore = require('./afkStore');
 
 const token = process.env.DISCORD_TOKEN;
 const applicationId = process.env.DISCORD_CLIENT_ID;
@@ -259,6 +261,9 @@ client.on('interactionCreate', async (interaction) => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
+  await afk.handleMessage(message, afkStore).catch((error) => {
+    console.error(`Could not process AFK status in guild ${message.guild.id}:`, error.message);
+  });
   const response = autoresponderStore.find(message.guild.id, message.content);
   if (response) await message.reply(response);
 });

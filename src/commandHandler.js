@@ -6,6 +6,7 @@ const { THRESHOLD, WINDOW_MS } = require('./antinuke');
 const jailStore = require('./jailStore');
 const logChannelStore = require('./logChannelStore');
 const tempVoiceStore = require('./tempVoiceStore');
+const afkStore = require('./afkStore');
 const { jailMember, unjailMember } = require('./jail');
 const { parseDuration, buildUserCardEmbed } = require('./moderation');
 const { buildHelpEmbed, MODERATION_PERMISSIONS } = require('./commandInteractions');
@@ -345,6 +346,12 @@ async function handleCommand(interaction) {
   }
   if (name === 'role') {
     await runRole(interaction);
+    return true;
+  }
+  if (name === 'afk') {
+    const reason = interaction.options.getString('reason')?.trim() || 'AFK';
+    afkStore.set(interaction.guildId, interaction.user.id, reason);
+    await interaction.reply({ content: `You are now AFK: ${reason}`, ephemeral: true });
     return true;
   }
   if (name === 'autoresponder') {

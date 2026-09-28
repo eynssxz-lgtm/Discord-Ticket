@@ -109,13 +109,7 @@ function hasWhitelistedRole(config, roleIds) {
 async function applyPunishment(member, punishment, reason) {
   if (punishment === 'remove-roles') {
     const removableRoles = [...member.roles.cache.values()].filter((role) => role.editable);
-    const results = await Promise.allSettled(
-      removableRoles.map((role) => member.roles.remove(role, reason)),
-    );
-    const failures = results.filter((result) => result.status === 'rejected');
-    if (failures.length) {
-      throw new AggregateError(failures.map(({ reason: error }) => error), 'Could not remove every manageable role.');
-    }
+    await member.roles.remove(removableRoles, reason);
     return true;
   }
   if (punishment === 'timeout') {

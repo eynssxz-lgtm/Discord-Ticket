@@ -136,6 +136,14 @@ function getCommands() {
           .setDescription('Role to add')
           .setRequired(true))),
     new SlashCommandBuilder()
+      .setName('afk')
+      .setDescription('Set your AFK status and optional reason')
+      .addStringOption((option) => option
+        .setName('reason')
+        .setDescription('Why you are away; leave empty to use AFK')
+        .setMaxLength(500)
+        .setRequired(false)),
+    new SlashCommandBuilder()
       .setName('autoresponder')
       .setDescription('Manage exact-match autoresponders')
       .addSubcommand((subcommand) => subcommand
@@ -209,16 +217,56 @@ function buildHelpEmbed() {
     title: 'SINCLAIR Commands',
     fields: [
       {
-        name: 'Slash commands',
+        name: 'General and setup',
         value: [
           '`/help`',
-          '`/set logs`, `/set temp-voice`, `/set jail-role`',
-          '`/role add`',
-          '`/kick`, `/ban`, `/timeout`, `/mute`, `/purge`, `/jail`, `/unjail`',
-          '`/avatar`, `/cover`, and `/mod`',
-          '`/autoresponder add|remove|list`',
-          '`/antinuke`',
-          '`/welcome`, `/set-welcome-channel`, `/set-welcome-message`, `/edit-embed`',
+          '`/afk [reason]`',
+          '`/set logs [channel]`',
+          '`/set temp-voice [channel]`',
+          '`/set jail-role role`',
+        ].join('\n'),
+      },
+      {
+        name: 'Roles',
+        value: '`/role add member role`',
+      },
+      {
+        name: 'Moderation',
+        value: [
+          '`/kick member [reason]`, `/ban member [reason]`',
+          '`/timeout member [duration] [reason]`, `/mute member [reason]`',
+          '`/purge [amount]`, `/jail member`, `/unjail member`',
+          '`/avatar [member]`, `/cover [member]`',
+          '`/mod kick|ban|timeout|mute|purge|jail|unjail|av|cover`',
+        ].join('\n'),
+      },
+      {
+        name: 'Autoresponders',
+        value: [
+          '`/autoresponder add trigger response`',
+          '`/autoresponder remove trigger`',
+          '`/autoresponder list`',
+        ].join('\n'),
+      },
+      {
+        name: 'Antinuke',
+        value: [
+          '`/antinuke enable|disable|status`',
+          '`/antinuke set-punishment punishment` (remove-roles, timeout, kick, ban, none)',
+          '`/antinuke whitelist-list`',
+          '`/antinuke whitelist-role add|remove|list role`',
+          '`/antinuke whitelist-category add|remove|list channel`',
+          '`/antinuke whitelist-channel add|remove|list channel`',
+        ].join('\n'),
+      },
+      {
+        name: 'Welcome messages',
+        value: [
+          '`/welcome channel channel`, `/welcome message message`',
+          '`/welcome status`, `/welcome disable`, `/welcome preview`',
+          '`/welcome embed edit`, `/welcome embed clear [field]`',
+          '`/set-welcome-channel channel`, `/set-welcome-message message`',
+          '`/edit-embed`',
         ].join('\n'),
       },
     ],

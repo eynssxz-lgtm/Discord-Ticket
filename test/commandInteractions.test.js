@@ -9,7 +9,7 @@ test('registers slash commands for every former prefix command family', () => {
   assert.deepEqual(commandNames, [
     'edit-embed', 'set-welcome-channel', 'set-welcome-message', 'welcome', 'help', 'set',
     'kick', 'ban', 'timeout', 'mute', 'purge', 'jail', 'unjail', 'avatar', 'cover',
-    'mod', 'role', 'autoresponder', 'antinuke',
+    'mod', 'role', 'afk', 'autoresponder', 'antinuke',
   ]);
 
   const setCommand = commands.find(({ name }) => name === 'set');
@@ -18,6 +18,8 @@ test('registers slash commands for every former prefix command family', () => {
   assert.equal(roleCommand.default_member_permissions, '268435456');
   assert.deepEqual(roleCommand.options.map(({ name }) => name), ['add']);
   assert.deepEqual(roleCommand.options[0].options.map(({ name }) => name), ['member', 'role']);
+  const afkCommand = commands.find(({ name }) => name === 'afk');
+  assert.deepEqual(afkCommand.options.map(({ name }) => name), ['reason']);
   const antinukeCommand = commands.find(({ name }) => name === 'antinuke');
   const punishmentChoices = antinukeCommand.options
     .find(({ name }) => name === 'set-punishment').options[0].choices;
@@ -33,9 +35,16 @@ test('registers slash commands for every former prefix command family', () => {
 test('help lists slash commands without prefix variants', () => {
   const help = buildHelpEmbed();
   const text = help.fields.map(({ value }) => value).join('\n');
-  assert.match(text, /`\/set logs`/);
-  assert.match(text, /`\/autoresponder add\|remove\|list`/);
-  assert.match(text, /`\/antinuke`/);
-  assert.match(text, /`\/jail`/);
+  assert.match(text, /`\/set logs \[channel\]`/);
+  assert.match(text, /`\/role add member role`/);
+  assert.match(text, /`\/afk \[reason\]`/);
+  assert.match(text, /`\/autoresponder add trigger response`/);
+  assert.match(text, /`\/antinuke set-punishment punishment`/);
+  assert.match(text, /`\/antinuke whitelist-role add\|remove\|list role`/);
+  assert.match(text, /`\/antinuke whitelist-category add\|remove\|list channel`/);
+  assert.match(text, /`\/welcome embed edit`/);
+  assert.match(text, /`\/welcome embed clear \[field\]`/);
+  assert.match(text, /`\/jail member`/);
+  assert.match(text, /`\/mod kick\|ban\|timeout\|mute\|purge\|jail\|unjail\|av\|cover`/);
   assert.doesNotMatch(text, /!/);
 });

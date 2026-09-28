@@ -247,7 +247,7 @@ test('supports every configured antinuke punishment', async () => {
   assert.equal(await applyPunishment(member, 'ban', 'test'), true);
   assert.equal(await applyPunishment(member, 'none', 'test'), false);
   assert.deepEqual(calls.map(([type]) => type), ['remove-roles', 'timeout', 'kick', 'ban']);
-  assert.equal(calls[0][1].id, 'role-a');
+  assert.deepEqual(calls[0][1].map(({ id }) => id), ['role-a']);
   assert.equal(calls[0][2], 'test');
 });
 

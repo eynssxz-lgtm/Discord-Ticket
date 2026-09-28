@@ -31,6 +31,8 @@ The bot logs voice join/leave/move events, message deletions, and deleted image 
 
 ## Moderation
 
+Use `/afk [reason]` to set a per-server AFK status. Your status clears the next time you send a message; members who mention you see the saved reason.
+
 Moderation commands include `/kick`, `/ban`, `/timeout`, `/mute`, `/purge`, `/jail`, `/unjail`, `/role add`, `/avatar`, and `/cover`. For example:
 
 ```text
