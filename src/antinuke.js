@@ -1,4 +1,4 @@
-const { AuditLogEvent, PermissionsBitField } = require('discord.js');
+const { AuditLogEvent, GatewayIntentBits, PermissionsBitField } = require('discord.js');
 
 const ACTION_GROUPS = new Map([
   [AuditLogEvent.ChannelDelete, 'channel-delete'],
@@ -37,6 +37,18 @@ const WINDOW_MS = 1_000;
 const DELETED_CHANNEL_TTL_MS = 20_000;
 const TIMEOUT_MS = 10 * 60 * 1000;
 const PUNISHMENTS = ['remove-roles', 'timeout', 'kick', 'ban', 'none'];
+const PUNISHMENT_PERMISSIONS = {
+  'remove-roles': PermissionsBitField.Flags.ManageRoles,
+  timeout: PermissionsBitField.Flags.ModerateMembers,
+  kick: PermissionsBitField.Flags.KickMembers,
+  ban: PermissionsBitField.Flags.BanMembers,
+};
+const PUNISHMENT_PERMISSION_NAMES = {
+  'remove-roles': 'Manage Roles',
+  timeout: 'Moderate Members',
+  kick: 'Kick Members',
+  ban: 'Ban Members',
+};
 const DISCORD_INVITE_URL = /(?<![\w.-])(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/[A-Za-z0-9-]+(?:[?#][^\s]*)?/i;
 
 function parseSnowflake(value) {
@@ -104,6 +116,18 @@ function isWhitelistedTarget(config, targetId, parentId, isCategory) {
 
 function hasWhitelistedRole(config, roleIds) {
   return roleIds.some((id) => config.roleIds.includes(id));
+}
+
+function getReadiness(guild, client, punishment) {
+  const permissions = guild.members.me?.permissions;
+  const requiredPunishmentPermission = PUNISHMENT_PERMISSIONS[punishment] || null;
+  return {
+    moderationIntent: Boolean(client.options?.intents?.has?.(GatewayIntentBits.GuildModeration)),
+    viewAuditLog: Boolean(permissions?.has(PermissionsBitField.Flags.ViewAuditLog)),
+    punishmentPermission: requiredPunishmentPermission === null
+      || Boolean(permissions?.has(requiredPunishmentPermission)),
+    punishmentPermissionName: PUNISHMENT_PERMISSION_NAMES[punishment] || null,
+  };
 }
 
 async function applyPunishment(member, punishment, reason) {
@@ -281,6 +305,7 @@ module.exports = {
   isMonitoredEntry,
   isWhitelistedTarget,
   hasWhitelistedRole,
+  getReadiness,
   applyPunishment,
   sendPunishmentNotice,
   attach,

@@ -11,6 +11,7 @@ const {
   isMonitoredEntry,
   isWhitelistedTarget,
   hasWhitelistedRole,
+  getReadiness,
   applyPunishment,
   sendPunishmentNotice,
   attach,
@@ -101,6 +102,21 @@ test('matches actor roles and target channel/category exemptions', () => {
   assert.equal(isWhitelistedTarget(config, 'channel-b', 'category-a', false), true);
   assert.equal(isWhitelistedTarget(config, 'category-a', null, true), true);
   assert.equal(isWhitelistedTarget(config, 'channel-b', 'category-b', false), false);
+});
+
+test('reports missing gateway intent and permissions for antinuke setup', () => {
+  const guild = {
+    members: {
+      me: { permissions: new PermissionsBitField(PermissionsBitField.Flags.ViewAuditLog) },
+    },
+  };
+  const client = { options: { intents: { has: () => false } } };
+  assert.deepEqual(getReadiness(guild, client, 'remove-roles'), {
+    moderationIntent: false,
+    viewAuditLog: true,
+    punishmentPermission: false,
+    punishmentPermissionName: 'Manage Roles',
+  });
 });
 
 test('uses an immediate action threshold and ten-minute timeout', () => {

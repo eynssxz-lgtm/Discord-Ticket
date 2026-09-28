@@ -1,6 +1,28 @@
 const MAX_NOTICE_LENGTH = 1800;
 const MAX_MENTIONED_USERS = 5;
 const MAX_REASON_LENGTH = 300;
+const DURATION_UNITS = [
+  ['day', 24 * 60 * 60],
+  ['hour', 60 * 60],
+  ['minute', 60],
+  ['second', 1],
+];
+
+function formatAfkDuration(since, now = Date.now()) {
+  let remainingSeconds = Math.max(0, Math.floor((now - since) / 1000));
+  if (remainingSeconds === 0) return 'less than a second';
+
+  const parts = [];
+  for (const [unit, secondsPerUnit] of DURATION_UNITS) {
+    const count = Math.floor(remainingSeconds / secondsPerUnit);
+    if (count > 0) {
+      parts.push(`${count} ${unit}${count === 1 ? '' : 's'}`);
+      remainingSeconds %= secondsPerUnit;
+    }
+    if (parts.length === 2) break;
+  }
+  return parts.join(', ');
+}
 
 async function handleMessage(message, store) {
   const guild = message.guild;
@@ -12,7 +34,8 @@ async function handleMessage(message, store) {
 
   const notices = [];
   if (authorStatus) {
-    notices.push(`${message.member?.displayName || author.username}, welcome back. Your AFK status was removed.`);
+    const duration = formatAfkDuration(authorStatus.since);
+    notices.push(`${message.member?.displayName || author.username}, welcome back. You were AFK for ${duration}; your status was removed.`);
   }
 
   const mentionedUsers = [...(message.mentions?.users?.values() || [])]
@@ -20,7 +43,10 @@ async function handleMessage(message, store) {
     .slice(0, MAX_MENTIONED_USERS);
   for (const user of mentionedUsers) {
     const status = store.get(guild.id, user.id);
-    if (status) notices.push(`<@${user.id}> is AFK: ${status.reason.slice(0, MAX_REASON_LENGTH)}`);
+    if (status) {
+      const duration = formatAfkDuration(status.since);
+      notices.push(`<@${user.id}> is AFK for ${duration}: ${status.reason.slice(0, MAX_REASON_LENGTH)}`);
+    }
   }
 
   if (notices.length === 0) return;
@@ -30,4 +56,4 @@ async function handleMessage(message, store) {
   });
 }
 
-module.exports = { handleMessage };
+module.exports = { formatAfkDuration, handleMessage };

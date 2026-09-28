@@ -328,10 +328,18 @@ async function runAntinuke(interaction) {
   const actionWord = THRESHOLD === 1 ? 'action' : 'actions';
   const secondWord = WINDOW_MS === 1_000 ? 'second' : 'seconds';
   const status = `Antinuke is ${config.enabled ? 'enabled' : 'disabled'}. Threshold: ${THRESHOLD} matching ${actionWord} within ${WINDOW_MS / 1000} ${secondWord}; punishment: ${punishment}.`;
+  const readiness = antinuke.getReadiness(interaction.guild, interaction.client, config.punishment);
+  const checks = [
+    `GuildModeration intent: ${readiness.moderationIntent ? 'ready' : 'MISSING'}`,
+    `View Audit Log: ${readiness.viewAuditLog ? 'ready' : 'MISSING'}`,
+    `Punishment permission${readiness.punishmentPermissionName ? ` (${readiness.punishmentPermissionName})` : ''}: ${readiness.punishmentPermission ? 'ready' : 'MISSING'}`,
+    'The bot role must be above the actor and any roles it needs to remove.',
+    'The server owner and whitelisted actors/targets are exempt.',
+  ].join('\n');
   const allLists = action === 'whitelist-list'
     ? `\nRoles: ${config.roleIds.length ? config.roleIds.map((id) => `<@&${id}>`).join(', ') : 'none'}\nCategories: ${config.categoryIds.length ? config.categoryIds.map((id) => `<#${id}>`).join(', ') : 'none'}\nChannels: ${config.channelIds.length ? config.channelIds.map((id) => `<#${id}>`).join(', ') : 'none'}`
     : '';
-  await interaction.reply({ content: `${status}${allLists}`, ephemeral: true });
+  await interaction.reply({ content: `${status}\n${checks}${allLists}`, ephemeral: true });
 }
 
 async function handleCommand(interaction) {
