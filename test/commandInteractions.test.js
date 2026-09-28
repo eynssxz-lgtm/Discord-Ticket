@@ -9,12 +9,19 @@ test('registers slash commands for every former prefix command family', () => {
   assert.deepEqual(commandNames, [
     'edit-embed', 'set-welcome-channel', 'set-welcome-message', 'welcome', 'help', 'set',
     'kick', 'ban', 'timeout', 'mute', 'purge', 'jail', 'unjail', 'avatar', 'cover',
-    'mod', 'autoresponder', 'antinuke',
+    'mod', 'role', 'autoresponder', 'antinuke',
   ]);
 
   const setCommand = commands.find(({ name }) => name === 'set');
   assert.deepEqual(setCommand.options.map(({ name }) => name), ['logs', 'temp-voice', 'jail-role']);
+  const roleCommand = commands.find(({ name }) => name === 'role');
+  assert.equal(roleCommand.default_member_permissions, '268435456');
+  assert.deepEqual(roleCommand.options.map(({ name }) => name), ['add']);
+  assert.deepEqual(roleCommand.options[0].options.map(({ name }) => name), ['member', 'role']);
   const antinukeCommand = commands.find(({ name }) => name === 'antinuke');
+  const punishmentChoices = antinukeCommand.options
+    .find(({ name }) => name === 'set-punishment').options[0].choices;
+  assert.ok(punishmentChoices.some(({ value }) => value === 'remove-roles'));
   assert.ok(antinukeCommand.options.some(({ name }) => name === 'whitelist-role'));
   assert.ok(antinukeCommand.options.some(({ name }) => name === 'whitelist-category'));
   assert.ok(antinukeCommand.options.some(({ name }) => name === 'whitelist-channel'));

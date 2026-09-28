@@ -121,6 +121,21 @@ function getCommands() {
       .addSubcommand((subcommand) => addModerationOptions(subcommand
         .setName('cover').setDescription('Show a member cover'), 'cover')),
     new SlashCommandBuilder()
+      .setName('role')
+      .setDescription('Manage member roles')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+      .addSubcommand((subcommand) => subcommand
+        .setName('add')
+        .setDescription('Add a role to a server member')
+        .addUserOption((option) => option
+          .setName('member')
+          .setDescription('Member to receive the role; select by mention or user')
+          .setRequired(true))
+        .addRoleOption((option) => option
+          .setName('role')
+          .setDescription('Role to add')
+          .setRequired(true))),
+    new SlashCommandBuilder()
       .setName('autoresponder')
       .setDescription('Manage exact-match autoresponders')
       .addSubcommand((subcommand) => subcommand
@@ -152,6 +167,7 @@ function getCommands() {
         .addStringOption((option) => option
           .setName('punishment').setDescription('Action to take after the threshold is reached')
           .addChoices(
+            { name: 'Remove all roles', value: 'remove-roles' },
             { name: 'Timeout', value: 'timeout' },
             { name: 'Kick', value: 'kick' },
             { name: 'Ban', value: 'ban' },
@@ -197,6 +213,7 @@ function buildHelpEmbed() {
         value: [
           '`/help`',
           '`/set logs`, `/set temp-voice`, `/set jail-role`',
+          '`/role add`',
           '`/kick`, `/ban`, `/timeout`, `/mute`, `/purge`, `/jail`, `/unjail`',
           '`/avatar`, `/cover`, and `/mod`',
           '`/autoresponder add|remove|list`',

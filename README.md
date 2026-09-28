@@ -31,16 +31,17 @@ The bot logs voice join/leave/move events, message deletions, and deleted image 
 
 ## Moderation
 
-Moderation commands include `/kick`, `/ban`, `/timeout`, `/mute`, `/purge`, `/jail`, `/unjail`, `/avatar`, and `/cover`. For example:
+Moderation commands include `/kick`, `/ban`, `/timeout`, `/mute`, `/purge`, `/jail`, `/unjail`, `/role add`, `/avatar`, and `/cover`. For example:
 
 ```text
 /kick member:@member reason:spam
 /timeout member:@member duration:10m reason:spam
 /purge amount:25
 /jail member:@member
+/role add member:@member role:@Role
 ```
 
-The same actions are available under `/mod` subcommands. The bot needs the corresponding moderation permissions, with its highest role above members and roles it must manage.
+The same actions are available under `/mod` subcommands where applicable. Role assignment requires **Manage Roles** for both the command user and bot, with the bot's highest role above the target member and selected role. You can select a member by mention or user picker.
 
 Configure the jail role with `/set jail-role role:@Jailed`. Jailing removes the member's assigned roles and applies the jail role; unjailing removes that role and restores saved roles that still exist. Role snapshots and the configured jail role are stored in `data/guild-jails.json`. Configure the jail role's channel permissions separately.
 
@@ -58,11 +59,11 @@ Triggers are case-insensitive and saved per server in `data/guild-autoresponders
 
 ## Antinuke
 
-Antinuke is disabled by default. Members with **Manage Server** can configure it with `/antinuke enable`, `/antinuke disable`, and `/antinuke status`. Choose the response with `/antinuke set-punishment punishment:timeout`, using `timeout`, `kick`, `ban`, or `none`.
+Antinuke is disabled by default. Members with **Manage Server** can configure it with `/antinuke enable`, `/antinuke disable`, and `/antinuke status`. New configurations default to removing all manageable roles after one matching action. Choose another response with `/antinuke set-punishment`, using `remove-roles`, `timeout`, `kick`, `ban`, or `none`. Existing servers keep their saved punishment until changed.
 
 Whitelist actors and targets with the `/antinuke whitelist-role`, `/antinuke whitelist-category`, and `/antinuke whitelist-channel` command groups. Each group provides `add`, `remove`, and `list` subcommands. `/antinuke whitelist-list` shows all exemptions.
 
-Whitelisted roles exempt their members from penalties. Whitelisted channels and categories exempt deletion of that channel or channels inside that category. SINCLAIR monitors channel deletion, role creation/deletion, member bans/kicks and pruning, bot additions, invite creation, webhook deletion, dangerous permission grants, and assignment of roles with dangerous permissions. Three matching actions by one non-whitelisted member within one second trigger the configured action. Invite creation is covered by Discord audit logs; invite URLs posted in message content are not. The bot needs **View Audit Log** and the permission for the selected action; its role must be high enough to moderate potential offenders. The default action is a ten-minute timeout. `none` detects and logs threshold events without automatically punishing the actor.
+Whitelisted roles exempt their members from penalties. Whitelisted channels and categories exempt deletion of that channel or channels inside that category. SINCLAIR monitors channel deletion, role creation/deletion, member bans/kicks and pruning, bot additions, invite creation and posted Discord invite URLs, webhook deletion, dangerous permission grants, and assignment of roles with dangerous permissions. One matching action by a non-whitelisted member triggers the configured action immediately. Invite URLs in messages require the **Message Content Intent** to be enabled in the Discord Developer Portal. The bot needs **View Audit Log** and the permission for the selected action; its role must be high enough to moderate potential offenders. Role removal only affects roles Discord allows the bot to manage. `none` detects and logs events without automatically punishing the actor.
 
 ## Welcome Messages
 

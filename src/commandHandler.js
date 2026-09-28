@@ -147,6 +147,46 @@ async function runModeration(interaction, action) {
   }
 }
 
+async function runRole(interaction) {
+  if (!await requirePermission(
+    interaction,
+    PermissionFlagsBits.ManageRoles,
+    'You need the Manage Roles permission to assign roles.',
+  )) return;
+  if (!interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    await interaction.reply({ content: 'I need the Manage Roles permission to assign roles.', ephemeral: true });
+    return;
+  }
+
+  const user = interaction.options.getUser('member', true);
+  const role = interaction.options.getRole('role', true);
+  const member = await interaction.guild.members.fetch(user.id).catch(() => null);
+  if (!member) {
+    await interaction.reply({ content: 'That user is not a member of this server.', ephemeral: true });
+    return;
+  }
+  if (role.id === interaction.guildId || role.managed || !role.editable) {
+    await interaction.reply({ content: 'I cannot assign that role. Check that it is not managed and is below my highest role.', ephemeral: true });
+    return;
+  }
+  if (!member.manageable) {
+    await interaction.reply({ content: 'I cannot manage that member. Move my highest role above theirs first.', ephemeral: true });
+    return;
+  }
+  if (member.roles.cache.has(role.id)) {
+    await interaction.reply({ content: `${member.user.tag} already has <@&${role.id}>.`, ephemeral: true });
+    return;
+  }
+
+  try {
+    await member.roles.add(role, `Role assigned by ${interaction.user.tag}`);
+    await interaction.reply({ content: `Added <@&${role.id}> to ${member.user.tag}.`, ephemeral: true });
+  } catch (error) {
+    console.error(`Could not assign role ${role.id} to ${member.id} in guild ${interaction.guildId}:`, error.message);
+    await interaction.reply({ content: 'I could not assign that role. Check my permissions and role hierarchy.', ephemeral: true });
+  }
+}
+
 async function runSet(interaction) {
   const setting = interaction.options.getSubcommand();
   if (setting === 'jail-role') {
@@ -280,8 +320,13 @@ async function runAntinuke(interaction) {
   }
 
   const config = antinukeStore.getConfig(interaction.guildId);
-  const punishment = config.punishment === 'timeout' ? '10-minute timeout' : config.punishment;
-  const status = `Antinuke is ${config.enabled ? 'enabled' : 'disabled'}. Threshold: ${THRESHOLD} matching actions within ${WINDOW_MS / 1000} second; punishment: ${punishment}.`;
+  const punishment = {
+    'remove-roles': 'remove all manageable roles',
+    timeout: '10-minute timeout',
+  }[config.punishment] || config.punishment;
+  const actionWord = THRESHOLD === 1 ? 'action' : 'actions';
+  const secondWord = WINDOW_MS === 1_000 ? 'second' : 'seconds';
+  const status = `Antinuke is ${config.enabled ? 'enabled' : 'disabled'}. Threshold: ${THRESHOLD} matching ${actionWord} within ${WINDOW_MS / 1000} ${secondWord}; punishment: ${punishment}.`;
   const allLists = action === 'whitelist-list'
     ? `\nRoles: ${config.roleIds.length ? config.roleIds.map((id) => `<@&${id}>`).join(', ') : 'none'}\nCategories: ${config.categoryIds.length ? config.categoryIds.map((id) => `<#${id}>`).join(', ') : 'none'}\nChannels: ${config.channelIds.length ? config.channelIds.map((id) => `<#${id}>`).join(', ') : 'none'}`
     : '';
@@ -296,6 +341,10 @@ async function handleCommand(interaction) {
   }
   if (name === 'set') {
     await runSet(interaction);
+    return true;
+  }
+  if (name === 'role') {
+    await runRole(interaction);
     return true;
   }
   if (name === 'autoresponder') {

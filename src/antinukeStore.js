@@ -3,10 +3,10 @@ const path = require('node:path');
 
 const DATA_DIRECTORY = path.join(__dirname, '..', 'data');
 const CONFIG_FILE = path.join(DATA_DIRECTORY, 'guild-antinuke.json');
-const PUNISHMENTS = ['timeout', 'kick', 'ban', 'none'];
+const PUNISHMENTS = ['remove-roles', 'timeout', 'kick', 'ban', 'none'];
 const EMPTY_CONFIG = Object.freeze({
   enabled: false,
-  punishment: 'timeout',
+  punishment: 'remove-roles',
   roleIds: [],
   categoryIds: [],
   channelIds: [],

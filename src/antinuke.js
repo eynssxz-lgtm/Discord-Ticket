@@ -32,11 +32,12 @@ const DANGEROUS_PERMISSIONS = [
   'ModerateMembers',
   'MentionEveryone',
 ].map((name) => PermissionsBitField.Flags[name]).filter((flag) => flag !== undefined);
-const THRESHOLD = 3;
+const THRESHOLD = 1;
 const WINDOW_MS = 1_000;
 const DELETED_CHANNEL_TTL_MS = 20_000;
 const TIMEOUT_MS = 10 * 60 * 1000;
-const PUNISHMENTS = ['timeout', 'kick', 'ban', 'none'];
+const PUNISHMENTS = ['remove-roles', 'timeout', 'kick', 'ban', 'none'];
+const DISCORD_INVITE_URL = /(?<![\w.-])(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/[A-Za-z0-9-]+(?:[?#][^\s]*)?/i;
 
 function parseSnowflake(value) {
   const match = value.match(/^(?:<@&?(\d+)>|<#(\d+)>|(\d+))$/);
@@ -45,6 +46,10 @@ function parseSnowflake(value) {
 
 function getActionGroup(action) {
   return ACTION_GROUPS.get(action) || null;
+}
+
+function containsDiscordInvite(content) {
+  return typeof content === 'string' && DISCORD_INVITE_URL.test(content);
 }
 
 function permissionBits(value) {
@@ -102,6 +107,17 @@ function hasWhitelistedRole(config, roleIds) {
 }
 
 async function applyPunishment(member, punishment, reason) {
+  if (punishment === 'remove-roles') {
+    const removableRoles = [...member.roles.cache.values()].filter((role) => role.editable);
+    const results = await Promise.allSettled(
+      removableRoles.map((role) => member.roles.remove(role, reason)),
+    );
+    const failures = results.filter((result) => result.status === 'rejected');
+    if (failures.length) {
+      throw new AggregateError(failures.map(({ reason: error }) => error), 'Could not remove every manageable role.');
+    }
+    return true;
+  }
   if (punishment === 'timeout') {
     await member.timeout(TIMEOUT_MS, reason);
     return true;
@@ -120,10 +136,63 @@ async function applyPunishment(member, punishment, reason) {
   throw new Error(`Unsupported antinuke punishment: ${punishment}`);
 }
 
+async function sendPunishmentNotice(member, guild, actionGroup, punishment) {
+  if (!['remove-roles', 'kick', 'ban'].includes(punishment)) return;
+  const action = punishment === 'remove-roles'
+    ? 'stripped of all manageable roles'
+    : punishment === 'kick' ? 'kicked' : 'banned';
+  const actionWord = THRESHOLD === 1 ? 'action' : 'actions';
+  const secondWord = WINDOW_MS === 1_000 ? 'second' : 'seconds';
+  const notice = [
+    `You are being ${action} from **${guild.name}** by the server's antinuke protection.`,
+    `Reason: ${THRESHOLD} matching **${actionGroup}** ${actionWord} were detected from your account within ${WINDOW_MS / 1000} ${secondWord}.`,
+    `Action taken: **${punishment}**.`,
+  ].join('\n');
+  try {
+    await member.send({ content: notice });
+  } catch (error) {
+    console.warn(`Could not DM antinuke notice to ${member.id}:`, error.message);
+  }
+}
+
 function attach(client, store, logIncident = async () => {}) {
   const recentActions = new Map();
   const deletedChannels = new Map();
   const lastPunishments = new Map();
+
+  const processAction = async (guild, member, actorId, actionGroup, targetId, config) => {
+    if (hasWhitelistedRole(config, member.roles.cache.keys())) return;
+
+    const now = Date.now();
+    const rateKey = `${guild.id}:${actorId}:${actionGroup}`;
+    const actions = (recentActions.get(rateKey) || []).filter((timestamp) => now - timestamp < WINDOW_MS);
+    actions.push(now);
+    recentActions.set(rateKey, actions);
+    if (actions.length < THRESHOLD) return;
+
+    const punishmentKey = `${guild.id}:${actorId}`;
+    if (now - (lastPunishments.get(punishmentKey) || 0) < WINDOW_MS) return;
+
+    const entry = { executorId: actorId, targetId };
+    const reason = `SINCLAIR antinuke: ${actionGroup} threshold exceeded`;
+    await sendPunishmentNotice(member, guild, actionGroup, config.punishment);
+    let punished;
+    try {
+      punished = await applyPunishment(member, config.punishment, reason);
+    } catch (error) {
+      await writeIncidentLog(logIncident, guild, formatIncident(entry, actionGroup, config.punishment, 'failed'));
+      throw error;
+    }
+    lastPunishments.set(punishmentKey, now);
+    const outcome = punished ? `applied ${config.punishment}` : 'detected (no punishment)';
+    console.warn(`Antinuke ${outcome} for ${actorId} in guild ${guild.id} for ${actionGroup}.`);
+    await writeIncidentLog(logIncident, guild, formatIncident(
+      entry,
+      actionGroup,
+      config.punishment,
+      punished ? `applied ${config.punishment}` : 'detected; no punishment configured',
+    ));
+  };
 
   client.on('channelDelete', (channel) => {
     deletedChannels.set(`${channel.guild.id}:${channel.id}`, {
@@ -163,51 +232,37 @@ function attach(client, store, logIncident = async () => {}) {
 
     try {
       const member = await guild.members.fetch(entry.executorId);
-      if (hasWhitelistedRole(config, member.roles.cache.keys())) {
-        return;
-      }
-
-      const now = Date.now();
-      const rateKey = `${guild.id}:${entry.executorId}:${actionGroup}`;
-      const actions = (recentActions.get(rateKey) || []).filter((timestamp) => now - timestamp < WINDOW_MS);
-      actions.push(now);
-      recentActions.set(rateKey, actions);
-      if (actions.length < THRESHOLD) {
-        return;
-      }
-
-      const punishmentKey = `${guild.id}:${entry.executorId}`;
-      if (now - (lastPunishments.get(punishmentKey) || 0) < WINDOW_MS) {
-        return;
-      }
-
-      const reason = `SINCLAIR antinuke: ${actionGroup} threshold exceeded`;
-      let punished;
-      try {
-        punished = await applyPunishment(member, config.punishment, reason);
-      } catch (error) {
-        await writeIncidentLog(logIncident, guild, formatIncident(entry, actionGroup, config.punishment, 'failed'));
-        throw error;
-      }
-      lastPunishments.set(punishmentKey, now);
-      const outcome = punished ? `applied ${config.punishment}` : 'detected (no punishment)';
-      console.warn(`Antinuke ${outcome} for ${entry.executorId} in guild ${guild.id} for ${actionGroup}.`);
-      await writeIncidentLog(logIncident, guild, formatIncident(
-        entry,
-        actionGroup,
-        config.punishment,
-        punished ? `applied ${config.punishment}` : 'detected; no punishment configured',
-      ));
+      await processAction(guild, member, entry.executorId, actionGroup, entry.targetId, config);
     } catch (error) {
       console.error(`Antinuke could not process executor ${entry.executorId} in guild ${guild.id}:`, error.message);
+    }
+  });
+
+  client.on('messageCreate', async (message) => {
+    const guild = message.guild;
+    const actorId = message.author?.id;
+    if (!guild || !actorId || message.author.bot || !containsDiscordInvite(message.content)
+      || actorId === client.user?.id || actorId === guild.ownerId) {
+      return;
+    }
+
+    try {
+      const config = store.getConfig(guild.id);
+      if (!config.enabled) return;
+      const member = message.member || await guild.members.fetch(actorId);
+      await processAction(guild, member, actorId, 'invite-link', message.channelId, config);
+    } catch (error) {
+      console.error(`Antinuke could not process invite link from ${actorId} in guild ${guild.id}:`, error.message);
     }
   });
 }
 
 function formatIncident(entry, actionGroup, punishment, outcome) {
+  const actionWord = THRESHOLD === 1 ? 'action' : 'actions';
+  const secondWord = WINDOW_MS === 1_000 ? 'second' : 'seconds';
   return [
     '🛡️ **Antinuke incident**',
-    `Action: **${actionGroup}** (${THRESHOLD} matching actions within ${WINDOW_MS / 1000} second)`,
+    `Action: **${actionGroup}** (${THRESHOLD} matching ${actionWord} within ${WINDOW_MS / 1000} ${secondWord})`,
     `Executor: <@${entry.executorId}> (\`${entry.executorId}\`)`,
     `Target ID: ${entry.targetId ? `\`${entry.targetId}\`` : 'unknown'}`,
     `Response: ${outcome}${outcome === 'failed' ? ` (${punishment})` : ''}.`,
@@ -225,6 +280,7 @@ async function writeIncidentLog(logIncident, guild, message) {
 module.exports = {
   parseSnowflake,
   getActionGroup,
+  containsDiscordInvite,
   containsDangerousPermission,
   hasDangerousPermissionGrant,
   hasDangerousRoleAssignment,
@@ -232,6 +288,7 @@ module.exports = {
   isWhitelistedTarget,
   hasWhitelistedRole,
   applyPunishment,
+  sendPunishmentNotice,
   attach,
   THRESHOLD,
   WINDOW_MS,
