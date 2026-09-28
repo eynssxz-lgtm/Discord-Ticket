@@ -26,5 +26,13 @@ test('parses command names and arguments after the configured prefix', () => {
     name: 'setlogs',
     args: ['#mod-logs'],
   });
+  assert.deepEqual(parseCommand('!set temp voice #create-room', '!'), {
+    name: 'settempvoice',
+    args: ['#create-room'],
+  });
+  assert.deepEqual(parseCommand('!settempvoice off', '!'), {
+    name: 'settempvoice',
+    args: ['off'],
+  });
   assert.equal(parseCommand('!setprefix ?', '?'), null);
 });

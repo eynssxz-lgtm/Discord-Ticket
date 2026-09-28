@@ -14,11 +14,12 @@ A Discord.js starter bot with a configurable command prefix per server.
 3. In the Discord Developer Portal, enable the **Message Content Intent** for the bot.
 4. Invite the bot with the permissions it needs, then start it with `npm start`.
 
-The default prefix is `!`. Server members with **Manage Server** can change it with:
+The default prefix is `!`. Server members with **Manage Server** can change it with either:
 
 ```text
 !setprefix ?
 !set prefix ?
+/set prefix prefix:?
 ```
 
 The new prefix is stored per server in `data/guild-prefixes.json`. After changing it, use the new prefix for subsequent commands.
@@ -31,6 +32,17 @@ Set a text channel for server logs with:
 ```
 
 The bot logs voice join/leave/move events, message deletions, and deleted image attachments there.
+
+## Temporary Voice Channels
+
+Choose a voice channel as the join-to-create trigger:
+
+```text
+!set temp voice #create-room
+!set temp voice off
+```
+
+Members who join the configured channel are moved into a new voice channel, created in the same category when applicable. Empty temporary channels are deleted automatically. The configuration is saved per server in `data/guild-temp-voice.json`. The bot needs **Manage Channels** and **Move Members** permissions.
 
 ## Autoresponders
 
@@ -73,6 +85,18 @@ Set a channel to enable welcome messages, then customize the message and embed:
 !welcome preview
 ```
 
-`/edit-embed` opens a prefilled form for title, description, color, footer, and image URL; leave a field blank to clear it. The original prefix commands remain available. Supported placeholders are `{user}`, `{username}`, `{server}`, and `{memberCount}`. Use `!welcome disable` to stop sending welcomes. Settings persist per server in `data/guild-welcome.json`. Enable the **Server Members Intent** in the Discord Developer Portal and grant the bot permission to view and send messages in the welcome channel. Slash commands require the **Manage Server** permission and are registered in each server when the bot starts.
+`/edit-embed` opens a prefilled form for title, description, color, footer, and image URL; leave a field blank to clear it. The original prefix commands remain available. Supported placeholders are `{user}`, `{username}`, `{server}`, and `{memberCount}`. Use `!welcome disable` to stop sending welcomes. Settings persist per server in `data/guild-welcome.json`. Enable the **Server Members Intent** in the Discord Developer Portal and grant the bot permission to view and send messages in the welcome channel. Welcome configuration slash commands require **Manage Server**; all slash commands are registered in each server when the bot starts.
+
+## Help and Jail
+
+Use `/help` or the current-prefix command `!help` to list the available commands. Server members with **Manage Roles** can configure and use jail commands:
+
+```text
+/set jail-role role:@Jailed
+/jail member:@member
+/unjail member:@member
+```
+
+The bot needs **Manage Roles**, and its highest role must be above the jail role and the member's roles. Jailing removes the member's assigned roles and applies the configured jail role; unjailing removes that role and restores the saved roles that still exist. Role snapshots and the configured jail role are stored in `data/guild-jails.json`. Configure the jail role's channel permissions separately.
 
 Run the tests with `npm test`.

@@ -18,7 +18,7 @@ function parseCommand(content, prefix) {
     return null;
   }
 
-  const directSetMatch = commandText.match(/^(setprefix|setlogs)(?:\s+([\s\S]+))?$/i);
+  const directSetMatch = commandText.match(/^(setprefix|setlogs|settempvoice)(?:\s+([\s\S]+))?$/i);
   if (directSetMatch) {
     const name = directSetMatch[1].toLowerCase();
     const argsText = (directSetMatch[2] || '').trim();
@@ -28,9 +28,10 @@ function parseCommand(content, prefix) {
     };
   }
 
-  const aliasedSetMatch = commandText.match(/^set\s+(prefix|logs)(?:\s+([\s\S]+))?$/i);
+  const aliasedSetMatch = commandText.match(/^set\s+(prefix|logs|temp\s+voice)(?:\s+([\s\S]+))?$/i);
   if (aliasedSetMatch) {
-    const name = aliasedSetMatch[1].toLowerCase() === 'logs' ? 'setlogs' : 'setprefix';
+    const setting = aliasedSetMatch[1].toLowerCase();
+    const name = setting === 'logs' ? 'setlogs' : setting === 'temp voice' ? 'settempvoice' : 'setprefix';
     const argsText = (aliasedSetMatch[2] || '').trim();
     return {
       name,

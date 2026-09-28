@@ -58,7 +58,7 @@ function buildUserCardEmbed(member, kind = 'avatar') {
   const username = user.globalName || user.username || 'Unknown User';
   const avatarUrl = user.avatarURL?.() || user.displayAvatarURL?.() || null;
   const bannerUrl = user.bannerURL?.() || user.coverURL?.() || null;
-  const imageUrl = kind === 'cover' ? (bannerUrl || avatarUrl) : avatarUrl;
+  const imageUrl = kind === 'cover' ? bannerUrl : avatarUrl;
 
   return {
     color: 0x5865f2,

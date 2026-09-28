@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const {
   Client,
+  ChannelType,
   GatewayIntentBits,
   PermissionsBitField,
   REST,
@@ -17,6 +18,11 @@ const antinukeStore = require('./antinukeStore');
 const welcome = require('./welcome');
 const welcomeStore = require('./welcomeStore');
 const welcomeInteractions = require('./welcomeInteractions');
+const commandInteractions = require('./commandInteractions');
+const jailStore = require('./jailStore');
+const { jailMember, unjailMember } = require('./jail');
+const tempVoice = require('./tempVoice');
+const tempVoiceStore = require('./tempVoiceStore');
 const { parseDuration, parsePurgeAmount, resolveTargetMember, buildUserCardEmbed } = require('./moderation');
 
 const token = process.env.DISCORD_TOKEN;
@@ -35,29 +41,29 @@ const client = new Client({
   ],
 });
 
-async function registerWelcomeCommands(guild) {
+async function registerGuildCommands(guild) {
   if (!applicationId) return;
   const rest = new REST({ version: '10' }).setToken(token);
   try {
     await rest.put(Routes.applicationGuildCommands(applicationId, guild.id), {
-      body: welcomeInteractions.getCommands(),
+      body: [...welcomeInteractions.getCommands(), ...commandInteractions.getCommands()],
     });
-    console.log(`Registered welcome commands in guild ${guild.id}`);
+    console.log(`Registered slash commands in guild ${guild.id}`);
   } catch (error) {
-    console.error(`Could not register welcome commands in guild ${guild.id}:`, error.message);
+    console.error(`Could not register slash commands in guild ${guild.id}:`, error.message);
   }
 }
 
 client.once('ready', async () => {
   console.log(`SINCLAIR is online as ${client.user.tag}`);
   if (!applicationId) {
-    console.warn('DISCORD_CLIENT_ID is missing; welcome slash commands were not registered.');
+    console.warn('DISCORD_CLIENT_ID is missing; slash commands were not registered.');
     return;
   }
-  await Promise.all(client.guilds.cache.map(registerWelcomeCommands));
+  await Promise.all(client.guilds.cache.map(registerGuildCommands));
 });
 
-client.on('guildCreate', registerWelcomeCommands);
+client.on('guildCreate', registerGuildCommands);
 
 async function getLogChannel(guild) {
   if (!guild) return null;
@@ -75,6 +81,10 @@ async function sendServerLog(guild, content) {
 client.on('voiceStateUpdate', async (oldState, newState) => {
   const guild = oldState.guild || newState.guild;
   if (!guild) return;
+
+  await tempVoice.handleVoiceStateUpdate(oldState, newState).catch((error) => {
+    console.error(`Could not manage temporary voice channel in guild ${guild.id}:`, error.message);
+  });
 
   const member = newState.member || oldState.member;
   if (!member || member.user.bot) return;
@@ -126,6 +136,93 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.inGuild()) return;
 
   if (interaction.isChatInputCommand()) {
+    if (interaction.commandName === 'help') {
+      await interaction.reply({
+        embeds: [commandInteractions.buildHelpEmbed(prefixStore.getPrefix(interaction.guildId, DEFAULT_PREFIX))],
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (interaction.commandName === 'set') {
+      if (interaction.options.getSubcommand() === 'prefix') {
+        if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)) {
+          await interaction.reply({ content: 'You need the Manage Server permission to change the prefix.', ephemeral: true });
+          return;
+        }
+        const newPrefix = interaction.options.getString('prefix', true);
+        if (!isValidPrefix(newPrefix)) {
+          await interaction.reply({ content: 'Choose a prefix of 1-5 characters with no spaces.', ephemeral: true });
+          return;
+        }
+        prefixStore.setPrefix(interaction.guildId, newPrefix);
+        await interaction.reply({ content: `Prefix updated to \`${newPrefix}\`.`, ephemeral: true });
+        return;
+      }
+
+      if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageRoles)) {
+        await interaction.reply({ content: 'You need the Manage Roles permission to set the jail role.', ephemeral: true });
+        return;
+      }
+      const role = interaction.options.getRole('role', true);
+      if (role.id === interaction.guildId || !role.editable) {
+        await interaction.reply({ content: 'The bot must be able to manage the selected role.', ephemeral: true });
+        return;
+      }
+      jailStore.setJailRole(interaction.guildId, role.id);
+      await interaction.reply({ content: `Jail role set to <@&${role.id}>.`, ephemeral: true });
+      return;
+    }
+
+    if (interaction.commandName === 'jail' || interaction.commandName === 'unjail') {
+      if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageRoles)) {
+        await interaction.reply({ content: 'You need the Manage Roles permission to jail or unjail members.', ephemeral: true });
+        return;
+      }
+      if (!interaction.guild.members.me?.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        await interaction.reply({ content: 'I need the Manage Roles permission to jail or unjail members.', ephemeral: true });
+        return;
+      }
+
+      const member = interaction.options.getMember('member');
+      if (!member) {
+        await interaction.reply({ content: 'That member could not be found in this server.', ephemeral: true });
+        return;
+      }
+      const jailRoleId = jailStore.getJailRole(interaction.guildId);
+      const jailRole = jailRoleId && interaction.guild.roles.cache.get(jailRoleId);
+      if (!jailRole || !jailRole.editable) {
+        await interaction.reply({ content: 'Set a manageable jail role first with `/set jail-role`.', ephemeral: true });
+        return;
+      }
+
+      try {
+        if (interaction.commandName === 'jail') {
+          const result = await jailMember(member, jailRole, jailStore);
+          const response = result.alreadyJailed
+            ? `${member.user.tag} is already jailed.`
+            : result.blockedRoleIds?.length
+              ? `I cannot remove every role from ${member.user.tag}; move my role above their assigned roles first.`
+              : `Jailed ${member.user.tag} and saved ${result.savedRoleCount} role(s).`;
+          await interaction.reply({ content: response, ephemeral: true });
+        } else {
+          const result = await unjailMember(member, jailRole, jailStore);
+          await interaction.reply({
+            content: result.blockedRoleIds?.length
+              ? `I cannot restore every role for ${member.user.tag}; move my role above their assigned roles first.`
+              : result.wasJailed
+                ? `Unjailed ${member.user.tag} and restored ${result.restoredRoleCount} role(s).`
+                : `${member.user.tag} was not jailed.`,
+            ephemeral: true,
+          });
+        }
+      } catch (error) {
+        console.error(`Could not ${interaction.commandName} ${member.id} in guild ${interaction.guildId}:`, error.message);
+        await interaction.reply({ content: `I could not ${interaction.commandName} that member. Check my role hierarchy and permissions.`, ephemeral: true });
+      }
+      return;
+    }
+
     if (!['edit-embed', 'set-welcome-channel', 'set-welcome-message'].includes(interaction.commandName)) {
       return;
     }
@@ -187,8 +284,13 @@ client.on('messageCreate', async (message) => {
   const command = parseCommand(message.content, prefix);
   const welcomeCommand = welcome.parseCommand(message.content, prefix);
 
-  const MODERATION_ACTIONS = new Set(['kick', 'ban', 'timeout', 'mute', 'jail', 'av', 'avatar', 'cover', 'purge']);
+  const MODERATION_ACTIONS = new Set(['kick', 'ban', 'timeout', 'mute', 'jail', 'unjail', 'av', 'avatar', 'cover', 'purge']);
   const moderationAction = command && (MODERATION_ACTIONS.has(command.name) ? command.name : null);
+
+  if (command?.name === 'help') {
+    await message.reply({ embeds: [commandInteractions.buildHelpEmbed(prefix)] });
+    return;
+  }
 
   if (command?.name === 'setprefix') {
     if (!message.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
@@ -214,7 +316,9 @@ client.on('messageCreate', async (message) => {
     const isStaff = message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)
       || message.member.permissions.has(PermissionsBitField.Flags.KickMembers)
       || message.member.permissions.has(PermissionsBitField.Flags.BanMembers)
-      || message.member.permissions.has(PermissionsBitField.Flags.ManageGuild);
+      || message.member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+      || (['jail', 'unjail'].includes(moderatorAction)
+        && message.member.permissions.has(PermissionsBitField.Flags.ManageRoles));
 
     if (!isStaff) {
       await message.reply('You need a moderation permission to use moderator commands.');
@@ -276,7 +380,62 @@ client.on('messageCreate', async (message) => {
     }
 
     if (moderatorAction === 'jail') {
-      await message.reply(`Jail action for ${member.user.tag} is not configured in this bot yet. Use a server jail role manually.`);
+      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        await message.reply('You need the Manage Roles permission to jail or unjail members.');
+        return;
+      }
+      if (!message.guild.members.me?.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        await message.reply('I need the Manage Roles permission to jail or unjail members.');
+        return;
+      }
+      const jailRoleId = jailStore.getJailRole(message.guild.id);
+      const jailRole = jailRoleId && message.guild.roles.cache.get(jailRoleId);
+      if (!jailRole || !jailRole.editable) {
+        await message.reply('Set a manageable jail role first with `/set jail-role`.');
+        return;
+      }
+      try {
+        const result = await jailMember(member, jailRole, jailStore);
+        if (result.blockedRoleIds?.length) {
+          await message.reply(`I cannot remove every role from ${member.user.tag}; move my role above their assigned roles first.`);
+          return;
+        }
+        await message.reply(result.alreadyJailed
+          ? `${member.user.tag} is already jailed.`
+          : `Jailed ${member.user.tag} and saved ${result.savedRoleCount} role(s).`);
+      } catch (error) {
+        console.error(`Could not jail ${member.id} in guild ${message.guild.id}:`, error.message);
+        await message.reply('I could not jail that member. Check my role hierarchy and permissions.');
+      }
+      return;
+    }
+
+    if (moderatorAction === 'unjail') {
+      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        await message.reply('You need the Manage Roles permission to jail or unjail members.');
+        return;
+      }
+      if (!message.guild.members.me?.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        await message.reply('I need the Manage Roles permission to jail or unjail members.');
+        return;
+      }
+      const jailRoleId = jailStore.getJailRole(message.guild.id);
+      const jailRole = jailRoleId && message.guild.roles.cache.get(jailRoleId);
+      if (!jailRole || !jailRole.editable) {
+        await message.reply('Set a manageable jail role first with `/set jail-role`.');
+        return;
+      }
+      try {
+        const result = await unjailMember(member, jailRole, jailStore);
+        await message.reply(result.blockedRoleIds?.length
+          ? `I cannot restore every role for ${member.user.tag}; move my role above their assigned roles first.`
+          : result.wasJailed
+            ? `Unjailed ${member.user.tag} and restored ${result.restoredRoleCount} role(s).`
+            : `${member.user.tag} was not jailed.`);
+      } catch (error) {
+        console.error(`Could not unjail ${member.id} in guild ${message.guild.id}:`, error.message);
+        await message.reply('I could not unjail that member. Check my role hierarchy and permissions.');
+      }
       return;
     }
 
@@ -293,7 +452,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (moderatorAction === 'help') {
-      await message.reply('Use `!mod kick @user`, `!mod ban @user`, `!mod timeout @user 10m`, `!mod mute @user`, `!mod purge 50`, `!mod jail @user`, `!mod av @user`, or `!mod cover @user`. You can also reply to a message to target the author.');
+      await message.reply(`Use \`${prefix}mod kick @user\`, \`${prefix}mod ban @user\`, \`${prefix}mod timeout @user 10m\`, \`${prefix}mod mute @user\`, \`${prefix}mod purge 50\`, \`${prefix}mod jail @user\`, \`${prefix}mod unjail @user\`, \`${prefix}mod av @user\`, or \`${prefix}mod cover @user\`. You can also reply to a message to target the author.`);
       return;
     }
 
@@ -329,6 +488,31 @@ client.on('messageCreate', async (message) => {
 
     logChannelStore.setLogChannel(message.guild.id, channel.id);
     await message.reply(`Log channel updated to <#${channel.id}>.`);
+    return;
+  }
+
+  if (command?.name === 'settempvoice') {
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) {
+      await message.reply('You need the Manage Server permission to configure temporary voice channels.');
+      return;
+    }
+
+    const rawTarget = command.args[0];
+    if (!rawTarget || rawTarget.toLowerCase() === 'off') {
+      tempVoiceStore.setTriggerChannel(message.guild.id, null);
+      await message.reply('Temporary voice channels are disabled.');
+      return;
+    }
+
+    const channelId = tempVoice.parseChannelId(rawTarget);
+    const channel = channelId && message.guild.channels.cache.get(channelId);
+    if (!channel || channel.type !== ChannelType.GuildVoice) {
+      await message.reply('Choose a voice channel from this server as the join-to-create channel.');
+      return;
+    }
+
+    tempVoiceStore.setTriggerChannel(message.guild.id, channel.id);
+    await message.reply(`Members joining <#${channel.id}> will get their own temporary voice channel.`);
     return;
   }
 
