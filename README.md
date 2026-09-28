@@ -29,7 +29,7 @@ Members with **Manage Server** can configure logging and temporary voice channel
 ,set temp-voice
 ```
 
-The bot logs voice join/leave/move events, message deletions, and deleted image attachments to the configured log channel. Members joining the temporary voice trigger channel are moved to a new channel in the same category when applicable. Empty temporary channels are deleted automatically. The bot needs **Manage Channels** and **Move Members** permissions.
+The bot logs voice join/leave/move events to the configured log channel. Deleted messages are logged as embeds with the author, channel, timestamp, content, and any image attachment. Members joining the temporary voice trigger channel are moved to a new channel in the same category when applicable. Empty temporary channels are deleted automatically. The bot needs **Manage Channels** and **Move Members** permissions.
 
 ## Moderation
 

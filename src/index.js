@@ -19,6 +19,7 @@ const commandHandler = require('./commandHandler');
 const tempVoice = require('./tempVoice');
 const afk = require('./afk');
 const afkStore = require('./afkStore');
+const { buildDeletedMessageLog } = require('./messageLogs');
 
 const token = process.env.DISCORD_TOKEN;
 const applicationId = process.env.DISCORD_CLIENT_ID;
@@ -107,19 +108,9 @@ client.on('messageDelete', async (message) => {
   const logChannel = await getLogChannel(message.guild);
   if (!logChannel) return;
 
-  const attachment = [...message.attachments.values()].find((item) => (
-    item.contentType?.startsWith('image/')
-    || /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(item.url)
-  ));
-  if (message.content && message.content.trim()) {
-    await logChannel.send(`🗑️ Message deleted in <#${message.channel.id}> by ${message.author.tag}:\n${message.content.slice(0, 1000)}`).catch(() => null);
-  }
-  if (attachment) {
-    await logChannel.send({
-      content: `🖼️ Deleted image from <#${message.channel.id}> by ${message.author.tag}.`,
-      files: [attachment.url],
-    }).catch(() => null);
-  }
+  await logChannel.send(buildDeletedMessageLog(message)).catch((error) => {
+    console.error(`Could not log deleted message ${message.id || 'unknown'} in guild ${message.guild.id}:`, error.message);
+  });
 });
 
 client.on('interactionCreate', async (interaction) => {

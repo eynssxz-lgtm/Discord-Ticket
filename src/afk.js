@@ -1,4 +1,3 @@
-const MAX_NOTICE_LENGTH = 1800;
 const MAX_MENTIONED_USERS = 5;
 const MAX_REASON_LENGTH = 300;
 const AFK_NICKNAME_TAG = '[AFK]';
@@ -77,10 +76,13 @@ async function handleMessage(message, store) {
   }
   if (authorStatus) store.clear(guild.id, author.id);
 
-  const notices = [];
+  const fields = [];
   if (authorStatus) {
     const duration = formatAfkDuration(authorStatus.since);
-    notices.push(`${message.member?.displayName || author.username}, welcome back. You were AFK for ${duration}; your status was removed.`);
+    fields.push({
+      name: `${message.member?.displayName || author.username}, welcome back`,
+      value: `You were AFK for ${duration}. Your status was removed.`,
+    });
   }
 
   const mentionedUsers = [...(message.mentions?.users?.values() || [])]
@@ -90,13 +92,20 @@ async function handleMessage(message, store) {
     const status = store.get(guild.id, user.id);
     if (status) {
       const duration = formatAfkDuration(status.since);
-      notices.push(`<@${user.id}> is AFK for ${duration}: ${status.reason.slice(0, MAX_REASON_LENGTH)}`);
+      fields.push({
+        name: `${user.globalName || user.username || 'Member'} is AFK`,
+        value: `Away for ${duration}. Reason: ${status.reason.slice(0, MAX_REASON_LENGTH)}`,
+      });
     }
   }
 
-  if (notices.length === 0) return;
+  if (fields.length === 0) return;
   await message.channel.send({
-    content: notices.join('\n').slice(0, MAX_NOTICE_LENGTH),
+    embeds: [{
+      color: authorStatus ? 0x57f287 : 0x5865f2,
+      title: 'AFK Update',
+      fields,
+    }],
     allowedMentions: { parse: [] },
   });
 }
