@@ -1,0 +1,7 @@
+node_modules/
+.env
+data/guild-prefixes.json
+data/guild-autoresponders.json
+data/guild-antinuke.json
+data/guild-welcome.json
+npm-debug.log*
