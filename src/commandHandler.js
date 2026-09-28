@@ -1,4 +1,12 @@
-const { ChannelType, PermissionFlagsBits } = require('discord.js');
+const {
+  ActionRowBuilder,
+  AttachmentBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  PermissionFlagsBits,
+  PermissionsBitField,
+} = require('discord.js');
 const autoresponder = require('./autoresponder');
 const autoresponderStore = require('./autoresponderStore');
 const antinukeStore = require('./antinukeStore');
@@ -10,6 +18,134 @@ const afkStore = require('./afkStore');
 const { jailMember, unjailMember } = require('./jail');
 const { parseDuration, buildUserCardEmbed } = require('./moderation');
 const { buildHelpEmbed, MODERATION_PERMISSIONS } = require('./commandInteractions');
+
+const TICKET_OPEN_BUTTON_ID = 'ticket:open';
+const TICKET_CLOSE_BUTTON_ID = 'ticket:close';
+const MAX_TRANSCRIPT_MESSAGES = 5_000;
+const MAX_TRANSCRIPT_BYTES = 7 * 1024 * 1024;
+
+function buildTicketOpenRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(TICKET_OPEN_BUTTON_ID)
+      .setLabel('Create Ticket')
+      .setStyle(ButtonStyle.Primary),
+  );
+}
+
+function buildTicketCloseRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(TICKET_CLOSE_BUTTON_ID)
+      .setLabel('Close Ticket')
+      .setStyle(ButtonStyle.Danger),
+  );
+}
+
+async function createTicketChannel(guild, user, config) {
+  const existing = guild.channels.cache.find((channel) => (
+    channel.parentId === config.categoryId && channel.topic === `ticket-owner:${user.id}`
+  ));
+  if (existing) return { channel: existing, alreadyOpen: true };
+
+  const username = user.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const channel = await guild.channels.create({
+    name: `ticket-${username || user.id}`.slice(0, 100),
+    type: ChannelType.GuildText,
+    parent: config.categoryId,
+    topic: `ticket-owner:${user.id}`,
+    permissionOverwrites: [
+      {
+        id: guild.id,
+        deny: [PermissionsBitField.Flags.ViewChannel],
+      },
+      {
+        id: user.id,
+        allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
+      },
+      {
+        id: config.supportRoleId,
+        allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
+      },
+      {
+        id: guild.client.user.id,
+        allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
+      },
+    ],
+  });
+  await channel.send({
+    content: `Welcome <@${user.id}>. Support staff will be with you shortly.`,
+    components: [buildTicketCloseRow()],
+  });
+  return { channel, alreadyOpen: false };
+}
+
+function parseTicketMessage(content) {
+  const match = /^,ticket(?:\s+([\s\S]*))?$/i.exec(content.trim());
+  if (!match) return null;
+  const [action, ...args] = (match[1] || '').trim().split(/\s+/).filter(Boolean);
+  return { action: action?.toLowerCase() || 'help', args };
+}
+
+function getMentionedId(value, type) {
+  const patterns = {
+    channel: /^<#(\d+)>$/,
+    role: /^<@&(\d+)>$/,
+  };
+  return patterns[type]?.exec(value)?.[1] || null;
+}
+
+function isTicketStaff(member, config) {
+  return Boolean(member?.roles?.cache?.has(config.supportRoleId)
+    || member?.permissions?.has(PermissionFlagsBits.ManageGuild));
+}
+
+async function sendTicketTranscript(channel, config, closedBy = null) {
+  if (!config.transcriptChannelId) {
+    throw new Error('Set a transcript log channel with ,ticket logs #channel before requesting a transcript.');
+  }
+  const logChannel = await channel.guild.channels.fetch(config.transcriptChannelId).catch(() => null);
+  if (!logChannel?.isTextBased?.() || !logChannel.send) {
+    throw new Error('The configured transcript log channel is unavailable or is not a text channel.');
+  }
+
+  const messages = [];
+  let before;
+  while (messages.length < MAX_TRANSCRIPT_MESSAGES) {
+    const page = await channel.messages.fetch({
+      limit: Math.min(100, MAX_TRANSCRIPT_MESSAGES - messages.length),
+      ...(before ? { before } : {}),
+    });
+    if (!page.size) break;
+    messages.push(...page.values());
+    before = page.last()?.id;
+    if (page.size < 100) break;
+  }
+
+  const transcript = messages
+    .sort((left, right) => left.createdTimestamp - right.createdTimestamp)
+    .map((message) => {
+      const timestamp = message.createdAt.toISOString();
+      const attachments = [...message.attachments.values()].map(({ url }) => ` [Attachment: ${url}]`).join('');
+      const body = message.content || (message.embeds.length ? '[Embed]' : '[No text]');
+      return `[${timestamp}] ${message.author.tag} (${message.author.id}): ${body}${attachments}`;
+    })
+    .join('\n');
+  const content = Buffer.from(transcript || 'No messages were found in this ticket.', 'utf8');
+  const clipped = content.length > MAX_TRANSCRIPT_BYTES;
+  const transcriptBuffer = clipped ? content.subarray(0, MAX_TRANSCRIPT_BYTES) : content;
+  const fileName = `${channel.name}-transcript.txt`.replace(/[^a-zA-Z0-9_.-]/g, '-');
+  await logChannel.send({
+    content: `Transcript for <#${channel.id}>${closedBy ? `, closed by ${closedBy}` : ''}.${clipped ? ' Transcript was shortened to fit the upload limit.' : ''}`,
+    files: [new AttachmentBuilder(transcriptBuffer, { name: fileName })],
+  });
+  return logChannel;
+}
+
+async function closeTicketChannel(channel, config, closedBy) {
+  await sendTicketTranscript(channel, config, closedBy);
+  await channel.delete(`Ticket closed by ${closedBy}`);
+}
 
 async function requirePermission(interaction, permission, message) {
   if (interaction.memberPermissions?.has(permission)) return true;
@@ -272,6 +408,189 @@ async function runAutoresponder(interaction) {
   });
 }
 
+async function runTicket(interaction) {
+  const action = interaction.options.getSubcommand();
+  const ticketStore = require('./ticketStore');
+  const config = ticketStore.getConfig(interaction.guildId);
+  if (!config.categoryId || !config.supportRoleId) {
+    await interaction.reply({ content: 'Set up tickets first with `/ticket setup category:@tickets role:@Support`.', ephemeral: true });
+    return;
+  }
+
+  if (action === 'create') {
+    const isSupport = interaction.member?.roles?.cache?.has(config.supportRoleId);
+    const isManager = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+    if (!isSupport && !isManager) {
+      await interaction.reply({ content: 'Only support staff can create a ticket for another member.', ephemeral: true });
+      return;
+    }
+    const member = interaction.options.getUser('member', true);
+    await interaction.deferReply({ ephemeral: true });
+    const result = await createTicketChannel(interaction.guild, member, config);
+    await interaction.editReply({
+      content: result.alreadyOpen
+        ? `${member.tag} already has an open ticket: <#${result.channel.id}>`
+        : `Ticket created: <#${result.channel.id}>`,
+    });
+    return;
+  }
+
+  if (action === 'close') {
+    const channel = interaction.options.getChannel('channel') || interaction.channel;
+    const ownerId = channel?.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
+    const isSupport = interaction.member?.roles?.cache?.has(config.supportRoleId);
+    const isManager = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+    if (channel && channel.parentId === config.categoryId && ownerId
+      && (ownerId === interaction.user.id || isSupport || isManager)) {
+      await interaction.deferReply({ ephemeral: true });
+      await closeTicketChannel(channel, config, interaction.user.tag);
+      await interaction.editReply({ content: `Closed ticket channel <#${channel.id}>.` });
+      return;
+    }
+    await interaction.reply({ content: 'Only the ticket owner or support staff can close a ticket channel.', ephemeral: true });
+  }
+}
+
+async function handleTicketMessage(message) {
+  if (!message.guild || message.author.bot) return false;
+  const command = parseTicketMessage(message.content);
+  if (!command) return false;
+
+  const { action, args } = command;
+  const ticketStore = require('./ticketStore');
+  const config = ticketStore.getConfig(message.guild.id);
+  const manageGuild = message.member.permissions.has(PermissionFlagsBits.ManageGuild);
+
+  if (action === 'setup') {
+    if (!manageGuild) {
+      await message.reply('You need the Manage Server permission to set up tickets.');
+      return true;
+    }
+    const categoryId = getMentionedId(args[0] || '', 'channel');
+    const supportRoleId = getMentionedId(args[1] || '', 'role');
+    const panelChannelId = args[2] ? getMentionedId(args[2], 'channel') : message.channel.id;
+    const category = categoryId && message.guild.channels.cache.get(categoryId);
+    const role = supportRoleId && message.guild.roles.cache.get(supportRoleId);
+    const panelChannel = panelChannelId && message.guild.channels.cache.get(panelChannelId);
+    if (category?.type !== ChannelType.GuildCategory || !role || !panelChannel?.isTextBased?.() || !panelChannel.send) {
+      await message.reply('Usage: `,ticket setup #category @support-role [#panel-channel]`');
+      return true;
+    }
+    ticketStore.setConfig(message.guild.id, {
+      categoryId: category.id,
+      supportRoleId: role.id,
+      panelChannelId: panelChannel.id,
+    });
+    await panelChannel.send({
+      content: '**Need help?** Select the button below to open a private support ticket.',
+      components: [buildTicketOpenRow()],
+    });
+    await message.reply(`Ticket setup saved. Panel posted in <#${panelChannel.id}>; tickets will be created in <#${category.id}>.`);
+    return true;
+  }
+
+  if (action === 'panel') {
+    if (!manageGuild) {
+      await message.reply('You need the Manage Server permission to post a ticket panel.');
+      return true;
+    }
+    if (!config.categoryId || !config.supportRoleId) {
+      await message.reply('Set up tickets first with `,ticket setup #category @support-role [#panel-channel]`.');
+      return true;
+    }
+    const panelChannelId = args[0] ? getMentionedId(args[0], 'channel') : message.channel.id;
+    const panelChannel = panelChannelId && message.guild.channels.cache.get(panelChannelId);
+    if (!panelChannel?.isTextBased?.() || !panelChannel.send) {
+      await message.reply('Usage: `,ticket panel [#channel]`');
+      return true;
+    }
+    ticketStore.setConfig(message.guild.id, { panelChannelId: panelChannel.id });
+    await panelChannel.send({
+      content: '**Need help?** Select the button below to open a private support ticket.',
+      components: [buildTicketOpenRow()],
+    });
+    await message.reply(`Ticket panel posted in <#${panelChannel.id}>.`);
+    return true;
+  }
+
+  if (action === 'logs') {
+    if (!manageGuild) {
+      await message.reply('You need the Manage Server permission to configure ticket transcript logs.');
+      return true;
+    }
+    if (args[0]?.toLowerCase() === 'off') {
+      ticketStore.setConfig(message.guild.id, { transcriptChannelId: null });
+      await message.reply('Ticket transcript logging is disabled.');
+      return true;
+    }
+    const channelId = getMentionedId(args[0] || '', 'channel');
+    const channel = channelId && message.guild.channels.cache.get(channelId);
+    if (!channel?.isTextBased?.() || !channel.send) {
+      await message.reply('Usage: `,ticket logs #transcript-channel` or `,ticket logs off`');
+      return true;
+    }
+    ticketStore.setConfig(message.guild.id, { transcriptChannelId: channel.id });
+    await message.reply(`Ticket transcripts will be logged in <#${channel.id}>.`);
+    return true;
+  }
+
+  if (!['transcript', 'close'].includes(action)) {
+    await message.reply('Ticket commands: `,ticket setup`, `,ticket panel`, `,ticket logs`, `,ticket transcript`, `,ticket close`.');
+    return true;
+  }
+
+  const ownerId = message.channel.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
+  if (!ownerId || message.channel.parentId !== config.categoryId) {
+    await message.reply('Use this command inside a ticket channel.');
+    return true;
+  }
+  if (ownerId !== message.author.id && !isTicketStaff(message.member, config)) {
+    await message.reply('Only the ticket owner or support staff can manage this ticket.');
+    return true;
+  }
+  if (action === 'transcript') {
+    const logChannel = await sendTicketTranscript(message.channel, config);
+    await message.reply(`Transcript uploaded to <#${logChannel.id}>.`);
+    return true;
+  }
+
+  await closeTicketChannel(message.channel, config, message.author.tag);
+  return true;
+}
+
+async function handleTicketButton(interaction) {
+  if (!interaction.isButton?.() || ![TICKET_OPEN_BUTTON_ID, TICKET_CLOSE_BUTTON_ID].includes(interaction.customId)) return false;
+  const ticketStore = require('./ticketStore');
+  const config = ticketStore.getConfig(interaction.guildId);
+
+  if (interaction.customId === TICKET_OPEN_BUTTON_ID) {
+    if (!config.categoryId || !config.supportRoleId) {
+      await interaction.reply({ content: 'Tickets are not configured in this server yet.', ephemeral: true });
+      return true;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const result = await createTicketChannel(interaction.guild, interaction.user, config);
+    await interaction.editReply({
+      content: result.alreadyOpen
+        ? `You already have an open ticket: <#${result.channel.id}>`
+        : `Your ticket is ready: <#${result.channel.id}>`,
+    });
+    return true;
+  }
+
+  const ownerId = interaction.channel?.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
+  const isSupport = interaction.member?.roles?.cache?.has(config.supportRoleId);
+  const isManager = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+  if (!ownerId || (ownerId !== interaction.user.id && !isSupport && !isManager)) {
+    await interaction.reply({ content: 'Only the ticket owner or support staff can close this ticket.', ephemeral: true });
+    return true;
+  }
+  await interaction.deferReply({ ephemeral: true });
+  await closeTicketChannel(interaction.channel, config, interaction.user.tag);
+  await interaction.editReply({ content: 'Ticket transcript logged and channel closed.' });
+  return true;
+}
+
 async function runAntinuke(interaction) {
   if (!await requirePermission(interaction, PermissionFlagsBits.ManageGuild, 'You need the Manage Server permission to configure antinuke.')) return;
   const group = interaction.options.getSubcommandGroup(false);
@@ -358,12 +677,22 @@ async function handleCommand(interaction) {
   }
   if (name === 'afk') {
     const reason = interaction.options.getString('reason')?.trim() || 'AFK';
-    afkStore.set(interaction.guildId, interaction.user.id, reason);
+    const member = interaction.member || await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+    const originalNickname = member?.nickname || member?.user?.username || null;
+    afkStore.set(interaction.guildId, interaction.user.id, reason, originalNickname);
+    if (member && typeof member.setNickname === 'function') {
+      const afk = require('./afk');
+      await afk.applyAfkNickname(member);
+    }
     await interaction.reply({ content: `You are now AFK: ${reason}`, ephemeral: true });
     return true;
   }
   if (name === 'autoresponder') {
     await runAutoresponder(interaction);
+    return true;
+  }
+  if (name === 'ticket') {
+    await runTicket(interaction);
     return true;
   }
   if (name === 'antinuke') {
@@ -383,3 +712,6 @@ async function handleCommand(interaction) {
 }
 
 module.exports = handleCommand;
+module.exports.handleTicketButton = handleTicketButton;
+module.exports.handleTicketMessage = handleTicketMessage;
+module.exports.parseTicketMessage = parseTicketMessage;

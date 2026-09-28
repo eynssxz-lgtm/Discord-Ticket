@@ -125,6 +125,18 @@ client.on('messageDelete', async (message) => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.inGuild()) return;
 
+  if (interaction.isButton?.()) {
+    try {
+      if (await commandHandler.handleTicketButton(interaction)) return;
+    } catch (error) {
+      console.error('Could not handle ticket button:', error.message);
+      const response = { content: 'The ticket action could not be completed. Check my permissions and try again.', ephemeral: true };
+      if (interaction.deferred || interaction.replied) await interaction.followUp(response);
+      else await interaction.reply(response);
+      return;
+    }
+  }
+
   if (interaction.isChatInputCommand()) {
     try {
       if (await commandHandler(interaction)) return;
@@ -261,6 +273,13 @@ client.on('interactionCreate', async (interaction) => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
+  try {
+    if (await commandHandler.handleTicketMessage(message)) return;
+  } catch (error) {
+    console.error(`Could not handle ticket command in guild ${message.guild.id}:`, error.message);
+    await message.reply('The ticket command could not be completed. Check the bot permissions and try again.').catch(() => null);
+    return;
+  }
   await afk.handleMessage(message, afkStore).catch((error) => {
     console.error(`Could not process AFK status in guild ${message.guild.id}:`, error.message);
   });

@@ -22,10 +22,14 @@ function get(guildId, userId) {
   return readConfigs()[guildId]?.[userId] || null;
 }
 
-function set(guildId, userId, reason) {
+function set(guildId, userId, reason, originalNickname = null) {
   const configs = readConfigs();
   configs[guildId] ||= {};
-  configs[guildId][userId] = { reason: reason.trim() || 'AFK', since: Date.now() };
+  configs[guildId][userId] = {
+    reason: reason.trim() || 'AFK',
+    since: Date.now(),
+    originalNickname: originalNickname ? String(originalNickname).trim() : null,
+  };
   writeConfigs(configs);
   return configs[guildId][userId];
 }

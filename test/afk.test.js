@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { formatAfkDuration, handleMessage } = require('../src/afk');
+const { formatAfkDuration, handleMessage, applyAfkNickname, restoreAfkNickname } = require('../src/afk');
 
 function makeStore(statuses) {
   return {
@@ -57,6 +57,25 @@ test('formats AFK durations using up to two readable units', () => {
   assert.equal(formatAfkDuration(0, 65_000), '1 minute, 5 seconds');
   assert.equal(formatAfkDuration(0, 3_600_000), '1 hour');
   assert.equal(formatAfkDuration(0, 90_061_000), '1 day, 1 hour');
+});
+
+test('adds and restores the AFK nickname marker without duplicating it', async () => {
+  const member = {
+    nickname: 'Jamie',
+    user: { username: 'Jamie' },
+    setNickname: async (nickname) => {
+      member.nickname = nickname;
+    },
+  };
+
+  await applyAfkNickname(member);
+  assert.equal(member.nickname, '[AFK] Jamie');
+
+  await restoreAfkNickname(member, { originalNickname: 'Jamie' });
+  assert.equal(member.nickname, 'Jamie');
+
+  await applyAfkNickname(member);
+  assert.equal(member.nickname, '[AFK] Jamie');
 });
 
 test('ignores bot messages and direct messages', async () => {

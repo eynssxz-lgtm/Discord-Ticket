@@ -18,20 +18,20 @@ Slash commands are registered in each server when the bot starts and when it joi
 
 ## Server Setup
 
-Members with **Manage Server** can configure logging and temporary voice channels:
+Members with **Manage Server** can configure logging and temporary voice channels. The text-command prefix is `,`:
 
 ```text
-/set logs channel:#mod-logs
-/set logs
-/set temp-voice channel:#create-room
-/set temp-voice
+,set logs channel:#mod-logs
+,set logs
+,set temp-voice channel:#create-room
+,set temp-voice
 ```
 
 The bot logs voice join/leave/move events, message deletions, and deleted image attachments to the configured log channel. Members joining the temporary voice trigger channel are moved to a new channel in the same category when applicable. Empty temporary channels are deleted automatically. The bot needs **Manage Channels** and **Move Members** permissions.
 
 ## Moderation
 
-Use `/afk [reason]` to set a per-server AFK status. Your status clears the next time you send a message; members who mention you see the saved reason.
+Use `/afk [reason]` to set a per-server AFK status, or use the text prefix version `,afk [reason]`. Your status clears the next time you send a message; members who mention you see the saved reason.
 
 Moderation commands include `/kick`, `/ban`, `/timeout`, `/mute`, `/purge`, `/jail`, `/unjail`, `/role add`, `/avatar`, and `/cover`. For example:
 
@@ -58,6 +58,12 @@ Members with **Manage Server** can add exact-match autoresponders:
 ```
 
 Triggers are case-insensitive and saved per server in `data/guild-autoresponders.json`. Autoresponders continue to match ordinary messages; commands themselves use slash interactions.
+
+## Tickets
+
+Members with **Manage Server** can run `,ticket setup #category @support-role [#panel-channel]`. `,ticket panel [#channel]` posts or reposts the panel. Members click **Create Ticket** to open a private channel visible to them and the support role. Each member can have one open ticket at a time.
+
+Set transcript delivery with `,ticket logs #transcript-channel`; transcripts are uploaded there when a ticket is closed with the button, `,ticket close`, or `/ticket close`. Use `,ticket transcript` inside an open ticket to upload its transcript without closing it. The ticket owner or support staff can manage or close a ticket. Staff can also create a ticket with `/ticket create member:@user`.
 
 ## Antinuke
 

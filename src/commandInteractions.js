@@ -97,8 +97,6 @@ function getCommands() {
           .setName('role')
           .setDescription('Role to assign to jailed members')
           .setRequired(true))),
-    ...['kick', 'ban', 'timeout', 'mute', 'purge', 'jail', 'unjail', 'avatar', 'cover']
-      .map(buildModerationCommand),
     new SlashCommandBuilder()
       .setName('mod')
       .setDescription('Run a moderation action')
@@ -120,6 +118,23 @@ function getCommands() {
         .setName('av').setDescription('Show a member avatar'), 'avatar'))
       .addSubcommand((subcommand) => addModerationOptions(subcommand
         .setName('cover').setDescription('Show a member cover'), 'cover')),
+    new SlashCommandBuilder()
+      .setName('ticket')
+      .setDescription('Manage support tickets')
+      .addSubcommand((subcommand) => subcommand
+        .setName('create')
+        .setDescription('Create a new support ticket for a user')
+        .addUserOption((option) => option
+          .setName('member')
+          .setDescription('Member to create a ticket for')
+          .setRequired(true)))
+      .addSubcommand((subcommand) => subcommand
+        .setName('close')
+        .setDescription('Close the current ticket channel')
+        .addChannelOption((option) => option
+          .setName('channel')
+          .setDescription('Ticket channel to close')
+          .setRequired(false))),
     new SlashCommandBuilder()
       .setName('role')
       .setDescription('Manage member roles')
@@ -215,29 +230,39 @@ function buildHelpEmbed() {
   return {
     color: 0x5865f2,
     title: 'SINCLAIR Commands',
+    description: 'Legacy text prefix: `,` — examples: `,help`, `,afk reason`, `,set logs #mod-logs`',
     fields: [
       {
-        name: 'General and setup',
+        name: 'General & setup',
         value: [
-          '`/help`',
-          '`/afk [reason]`',
-          '`/set logs [channel]`',
-          '`/set temp-voice [channel]`',
-          '`/set jail-role role`',
+          '`/help`', '`/afk [reason]`',
+          '`/set logs [channel]`', '`/set temp-voice [channel]`',
+          '`/set jail-role role`', '`/set-welcome-channel channel`',
+          '`/set-welcome-message message`', '`/edit-embed`',
         ].join('\n'),
       },
       {
         name: 'Roles',
-        value: '`/role add member role`',
+        value: [
+          '`/role add member role`',
+          '`/role add @member @role`',
+        ].join('\n'),
       },
       {
         name: 'Moderation',
         value: [
-          '`/kick member [reason]`, `/ban member [reason]`',
-          '`/timeout member [duration] [reason]`, `/mute member [reason]`',
-          '`/purge [amount]`, `/jail member`, `/unjail member`',
-          '`/avatar [member]`, `/cover [member]`',
           '`/mod kick|ban|timeout|mute|purge|jail|unjail|av|cover`',
+          '`/jail member`', '`/unjail member`',
+          '`/role add member role`',
+        ].join('\n'),
+      },
+      {
+        name: 'Tickets',
+        value: [
+          '`,ticket setup #tickets @Support [#panel]`',
+          '`,ticket panel [#channel]`', '`,ticket logs #transcripts`',
+          '`,ticket transcript`', '`,ticket close`',
+          '`/ticket create member:@user`', '`/ticket close [channel]`',
         ].join('\n'),
       },
       {
@@ -252,7 +277,7 @@ function buildHelpEmbed() {
         name: 'Antinuke',
         value: [
           '`/antinuke enable|disable|status`',
-          '`/antinuke set-punishment punishment` (remove-roles, timeout, kick, ban, none)',
+          '`/antinuke set-punishment punishment`',
           '`/antinuke whitelist-list`',
           '`/antinuke whitelist-role add|remove|list role`',
           '`/antinuke whitelist-category add|remove|list channel`',
@@ -262,11 +287,9 @@ function buildHelpEmbed() {
       {
         name: 'Welcome messages',
         value: [
-          '`/welcome channel channel`, `/welcome message message`',
-          '`/welcome status`, `/welcome disable`, `/welcome preview`',
-          '`/welcome embed edit`, `/welcome embed clear [field]`',
-          '`/set-welcome-channel channel`, `/set-welcome-message message`',
-          '`/edit-embed`',
+          '`/welcome channel channel`', '`/welcome message message`',
+          '`/welcome status`', '`/welcome disable`', '`/welcome preview`',
+          '`/welcome embed edit`', '`/welcome embed clear [field]`',
         ].join('\n'),
       },
     ],

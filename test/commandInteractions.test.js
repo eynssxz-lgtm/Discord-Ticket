@@ -1,19 +1,34 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { getCommands, buildHelpEmbed } = require('../src/commandInteractions');
+const { parseTicketMessage } = require('../src/commandHandler');
 const welcomeInteractions = require('../src/welcomeInteractions');
 
-test('registers slash commands for every former prefix command family', () => {
+test('parses comma-prefixed ticket commands and ignores other messages', () => {
+  assert.deepEqual(parseTicketMessage(',ticket setup #tickets @Support #panel'), {
+    action: 'setup',
+    args: ['#tickets', '@Support', '#panel'],
+  });
+  assert.deepEqual(parseTicketMessage(',TICKET logs #transcripts'), {
+    action: 'logs',
+    args: ['#transcripts'],
+  });
+  assert.deepEqual(parseTicketMessage(',ticket'), { action: 'help', args: [] });
+  assert.equal(parseTicketMessage('ticket setup #tickets @Support'), null);
+});
+
+test('registers slash commands for every supported command family', () => {
   const commands = [...welcomeInteractions.getCommands(), ...getCommands()];
   const commandNames = commands.map(({ name }) => name);
   assert.deepEqual(commandNames, [
     'edit-embed', 'set-welcome-channel', 'set-welcome-message', 'welcome', 'help', 'set',
-    'kick', 'ban', 'timeout', 'mute', 'purge', 'jail', 'unjail', 'avatar', 'cover',
-    'mod', 'role', 'afk', 'autoresponder', 'antinuke',
+    'mod', 'ticket', 'role', 'afk', 'autoresponder', 'antinuke',
   ]);
 
   const setCommand = commands.find(({ name }) => name === 'set');
   assert.deepEqual(setCommand.options.map(({ name }) => name), ['logs', 'temp-voice', 'jail-role']);
+  const ticketCommand = commands.find(({ name }) => name === 'ticket');
+  assert.deepEqual(ticketCommand.options.map(({ name }) => name), ['create', 'close']);
   const roleCommand = commands.find(({ name }) => name === 'role');
   assert.equal(roleCommand.default_member_permissions, '268435456');
   assert.deepEqual(roleCommand.options.map(({ name }) => name), ['add']);
@@ -32,7 +47,7 @@ test('registers slash commands for every former prefix command family', () => {
   assert.ok(welcomeCommand.options.some(({ name }) => name === 'embed'));
 });
 
-test('help lists slash commands without prefix variants', () => {
+test('help lists the supported command families and ticket setup', () => {
   const help = buildHelpEmbed();
   const text = help.fields.map(({ value }) => value).join('\n');
   assert.match(text, /`\/set logs \[channel\]`/);
@@ -40,11 +55,11 @@ test('help lists slash commands without prefix variants', () => {
   assert.match(text, /`\/afk \[reason\]`/);
   assert.match(text, /`\/autoresponder add trigger response`/);
   assert.match(text, /`\/antinuke set-punishment punishment`/);
-  assert.match(text, /`\/antinuke whitelist-role add\|remove\|list role`/);
-  assert.match(text, /`\/antinuke whitelist-category add\|remove\|list channel`/);
-  assert.match(text, /`\/welcome embed edit`/);
-  assert.match(text, /`\/welcome embed clear \[field\]`/);
-  assert.match(text, /`\/jail member`/);
+  assert.match(text, /`,ticket setup #tickets @Support \[#panel\]`/);
+  assert.match(text, /`,ticket panel \[#channel\]`/);
+  assert.match(text, /`,ticket logs #transcripts`/);
+  assert.match(text, /`,ticket transcript`/);
+  assert.doesNotMatch(text, /`\/ticket setup/);
   assert.match(text, /`\/mod kick\|ban\|timeout\|mute\|purge\|jail\|unjail\|av\|cover`/);
   assert.doesNotMatch(text, /!/);
 });
