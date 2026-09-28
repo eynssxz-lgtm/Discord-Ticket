@@ -10,39 +10,6 @@ const URL_FIELDS = new Set(['image', 'thumbnail']);
 const TEXT_FIELDS = new Set(Object.keys(EMBED_LIMITS));
 const HEX_COLOR = /^#?[0-9a-f]{6}$/i;
 
-function parseCommand(content, prefix) {
-  if (!content.startsWith(prefix)) return null;
-  const commandText = content.slice(prefix.length).trim();
-
-  if (/^welcome\s+status$/i.test(commandText)) return { action: 'status' };
-  if (/^welcome\s+disable$/i.test(commandText)) return { action: 'disable' };
-  if (/^welcome\s+preview$/i.test(commandText)) return { action: 'preview' };
-
-  const channelMatch = commandText.match(/^(?:set\s+welcome\s+channel|welcome\s+channel)\s+([\s\S]+)$/i);
-  if (channelMatch) return { action: 'channel', value: channelMatch[1].trim() };
-
-  const messageMatch = commandText.match(/^(?:set\s+welcome\s+message|welcome\s+message)(?:\s+([\s\S]*))?$/i);
-  if (messageMatch) {
-    const value = (messageMatch[1] || '').trim();
-    return { action: 'message', value: /^clear$/i.test(value) ? '' : value };
-  }
-
-  const embedClearMatch = commandText.match(/^edit\s+embed\s+clear(?:\s+([\w]+))?$/i);
-  if (embedClearMatch) {
-    return { action: 'embed-clear', field: (embedClearMatch[1] || '').toLowerCase() };
-  }
-
-  const embedEditMatch = commandText.match(/^edit\s+embed\s*([\s\S]*)$/i);
-  if (embedEditMatch) {
-    return {
-      action: 'embed-edit',
-      value: embedEditMatch[1].trim().replace(/^\|\s*/, ''),
-    };
-  }
-
-  return null;
-}
-
 function parseChannelId(value) {
   const match = value.match(/^(?:<#(\d+)>|(\d+))$/);
   return match?.[1] || match?.[2] || null;
@@ -162,4 +129,4 @@ function help(prefix) {
   ].join('\n');
 }
 
-module.exports = { parseCommand, parseChannelId, parseEmbedUpdate, parseEmbedEdit, formatMessage, buildPayload, help };
+module.exports = { parseChannelId, parseEmbedUpdate, parseEmbedEdit, formatMessage, buildPayload, help };

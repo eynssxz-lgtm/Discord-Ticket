@@ -7,23 +7,6 @@ function isValidTrigger(trigger) {
     && trigger.trim().length <= MAX_TRIGGER_LENGTH;
 }
 
-function parseCommand(content, prefix) {
-  if (!content.startsWith(prefix)) {
-    return null;
-  }
-
-  const commandText = content.slice(prefix.length).trim();
-  const match = commandText.match(/^autoresponder\s+(add|remove|list)(?:\s+([\s\S]+))?$/i);
-  if (!match) {
-    return null;
-  }
-
-  return {
-    action: match[1].toLowerCase(),
-    payload: (match[2] || '').trim(),
-  };
-}
-
 function parseAddPayload(payload) {
   const separatorIndex = payload.indexOf('|');
   if (separatorIndex < 0) {
@@ -39,4 +22,4 @@ function parseAddPayload(payload) {
   return { trigger, response };
 }
 
-module.exports = { isValidTrigger, parseCommand, parseAddPayload };
+module.exports = { isValidTrigger, parseAddPayload };

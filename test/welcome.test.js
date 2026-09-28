@@ -1,7 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  parseCommand,
   parseChannelId,
   parseEmbedUpdate,
   parseEmbedEdit,
@@ -14,24 +13,6 @@ const {
   buildEmbedModal,
   parseModalValues,
 } = require('../src/welcomeInteractions');
-
-test('parses named welcome settings, embed edit, preview, status, and disable commands', () => {
-  assert.deepEqual(parseCommand('!Set Welcome Channel <#123>', '!'), {
-    action: 'channel', value: '<#123>',
-  });
-  assert.deepEqual(parseCommand('!Set Welcome Message Hi {user}!', '!'), {
-    action: 'message', value: 'Hi {user}!',
-  });
-  assert.deepEqual(parseCommand('!Edit Embed title: Welcome! | description: Hi!', '!'), {
-    action: 'embed-edit', value: 'title: Welcome! | description: Hi!',
-  });
-  assert.deepEqual(parseCommand('!Edit Embed clear title', '!'), {
-    action: 'embed-clear', field: 'title',
-  });
-  assert.deepEqual(parseCommand('!welcome preview', '!'), { action: 'preview' });
-  assert.deepEqual(parseCommand('!welcome status', '!'), { action: 'status' });
-  assert.deepEqual(parseCommand('!welcome disable', '!'), { action: 'disable' });
-});
 
 test('validates channel IDs and embed fields', () => {
   assert.equal(parseChannelId('<#123>'), '123');
@@ -80,6 +61,11 @@ test('registers welcome slash commands and builds a prefilled embed modal', () =
     'edit-embed',
     'set-welcome-channel',
     'set-welcome-message',
+    'welcome',
+  ]);
+  const welcomeCommand = getCommands().find(({ name }) => name === 'welcome');
+  assert.deepEqual(welcomeCommand.options.map(({ name }) => name), [
+    'channel', 'message', 'status', 'disable', 'preview', 'embed',
   ]);
   const modal = buildEmbedModal({ title: 'Welcome!', color: '#36a2eb' }).toJSON();
   assert.equal(modal.custom_id, EMBED_MODAL_ID);

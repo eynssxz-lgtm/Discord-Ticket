@@ -13,35 +13,6 @@ const WINDOW_MS = 10_000;
 const TIMEOUT_MS = 10 * 60 * 1000;
 const PUNISHMENTS = ['timeout', 'kick', 'ban', 'none'];
 
-function parseCommand(content, prefix) {
-  if (!content.startsWith(prefix)) {
-    return null;
-  }
-
-  const commandText = content.slice(prefix.length).trim();
-  if (/^antinuke\s+enable$/i.test(commandText)) return { action: 'enable' };
-  if (/^antinuke\s+disable$/i.test(commandText)) return { action: 'disable' };
-  if (/^antinuke\s+status$/i.test(commandText)) return { action: 'status' };
-  if (/^antinuke\s+whitelist\s+list$/i.test(commandText)) return { action: 'list' };
-
-  const punishmentMatch = commandText.match(/^antinuke\s+set\s+punishment\s+(timeout|kick|ban|none)$/i);
-  if (punishmentMatch) {
-    return { action: 'set-punishment', punishment: punishmentMatch[1].toLowerCase() };
-  }
-
-  const match = commandText.match(/^antinuke\s+whitelist\s+(role|category|channel)\s+(add|remove|list)(?:\s+([\s\S]+))?$/i);
-  if (!match) {
-    return null;
-  }
-
-  return {
-    action: 'whitelist',
-    targetType: match[1].toLowerCase(),
-    operation: match[2].toLowerCase(),
-    target: (match[3] || '').trim(),
-  };
-}
-
 function parseSnowflake(value) {
   const match = value.match(/^(?:<@&?(\d+)>|<#(\d+)>|(\d+))$/);
   return match?.[1] || match?.[2] || match?.[3] || null;
@@ -155,7 +126,6 @@ function attach(client, store) {
 }
 
 module.exports = {
-  parseCommand,
   parseSnowflake,
   getActionGroup,
   isWhitelistedTarget,

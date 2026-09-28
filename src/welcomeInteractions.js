@@ -43,6 +43,48 @@ function getCommands() {
         .setDescription('Use {user}, {username}, {server}, or {memberCount}')
         .setMaxLength(2000)
         .setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('welcome')
+      .setDescription('Manage welcome messages and embeds')
+      .addSubcommand((subcommand) => subcommand
+        .setName('channel')
+        .setDescription('Choose where welcome messages are sent')
+        .addChannelOption((option) => option
+          .setName('channel')
+          .setDescription('Text channel for welcome messages')
+          .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+          .setRequired(true)))
+      .addSubcommand((subcommand) => subcommand
+        .setName('message')
+        .setDescription('Set the text shown when a member joins')
+        .addStringOption((option) => option
+          .setName('message')
+          .setDescription('Use {user}, {username}, {server}, or {memberCount}')
+          .setMaxLength(2000)
+          .setRequired(true)))
+      .addSubcommand((subcommand) => subcommand.setName('status').setDescription('Show welcome settings'))
+      .addSubcommand((subcommand) => subcommand.setName('disable').setDescription('Disable welcome messages'))
+      .addSubcommand((subcommand) => subcommand.setName('preview').setDescription('Preview the configured welcome message'))
+      .addSubcommandGroup((group) => group
+        .setName('embed')
+        .setDescription('Manage the welcome embed')
+        .addSubcommand((subcommand) => subcommand.setName('edit').setDescription('Open the welcome embed editor'))
+        .addSubcommand((subcommand) => subcommand
+          .setName('clear')
+          .setDescription('Clear the welcome embed or one field')
+          .addStringOption((option) => option
+            .setName('field')
+            .setDescription('Embed field to clear, or leave empty to clear all')
+            .addChoices(
+              { name: 'Title', value: 'title' },
+              { name: 'Description', value: 'description' },
+              { name: 'Color', value: 'color' },
+              { name: 'Footer', value: 'footer' },
+              { name: 'Author', value: 'author' },
+              { name: 'Image', value: 'image' },
+              { name: 'Thumbnail', value: 'thumbnail' },
+            )
+            .setRequired(false)))),
   ].map((command) => command.toJSON());
 }
 

@@ -2,7 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { AuditLogEvent } = require('discord.js');
 const {
-  parseCommand,
   parseSnowflake,
   getActionGroup,
   isWhitelistedTarget,
@@ -13,21 +12,6 @@ const {
   TIMEOUT_MS,
   PUNISHMENTS,
 } = require('../src/antinuke');
-
-test('parses antinuke enable and whitelist commands', () => {
-  assert.deepEqual(parseCommand('!antinuke enable', '!'), { action: 'enable' });
-  assert.deepEqual(parseCommand('!antinuke whitelist role add <@&123>', '!'), {
-    action: 'whitelist',
-    targetType: 'role',
-    operation: 'add',
-    target: '<@&123>',
-  });
-  assert.deepEqual(parseCommand('!antinuke set punishment BAN', '!'), {
-    action: 'set-punishment',
-    punishment: 'ban',
-  });
-  assert.equal(parseCommand('!antinuke enable', '?'), null);
-});
 
 test('parses role, channel, category mentions and raw IDs', () => {
   assert.equal(parseSnowflake('<@&123>'), '123');

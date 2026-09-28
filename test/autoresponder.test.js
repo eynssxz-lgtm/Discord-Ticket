@@ -1,22 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isValidTrigger, parseCommand, parseAddPayload } = require('../src/autoresponder');
-
-test('parses autoresponder add, remove, and list commands', () => {
-  assert.deepEqual(parseCommand('!autoresponder add hello | Hi there!', '!'), {
-    action: 'add',
-    payload: 'hello | Hi there!',
-  });
-  assert.deepEqual(parseCommand('!autoresponder remove hello', '!'), {
-    action: 'remove',
-    payload: 'hello',
-  });
-  assert.deepEqual(parseCommand('!autoresponder list', '!'), {
-    action: 'list',
-    payload: '',
-  });
-  assert.equal(parseCommand('!autoresponder list', '?'), null);
-});
+const { isValidTrigger, parseAddPayload } = require('../src/autoresponder');
 
 test('splits trigger from response at the first separator', () => {
   assert.deepEqual(parseAddPayload('hello | Hi | there!'), {

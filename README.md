@@ -1,6 +1,6 @@
 # SINCLAIR
 
-A Discord.js starter bot with a configurable command prefix per server.
+A Discord.js bot for server moderation, safety, welcome messages, and automation. Bot commands are Discord slash commands.
 
 ## Requirements
 
@@ -11,92 +11,67 @@ A Discord.js starter bot with a configurable command prefix per server.
 
 1. Install dependencies with `npm install`.
 2. Copy `.env.example` to `.env` and set `DISCORD_TOKEN` and `DISCORD_CLIENT_ID` from the Discord Developer Portal.
-3. In the Discord Developer Portal, enable the **Message Content Intent** for the bot.
+3. Enable the **Message Content Intent** and **Server Members Intent** for the bot.
 4. Invite the bot with the permissions it needs, then start it with `npm start`.
 
-The default prefix is `!`. Server members with **Manage Server** can change it with either:
+Slash commands are registered in each server when the bot starts and when it joins a server. Command changes are applied on the next start.
+
+## Server Setup
+
+Members with **Manage Server** can configure logging and temporary voice channels:
 
 ```text
-!setprefix ?
-!set prefix ?
-/set prefix prefix:?
+/set logs channel:#mod-logs
+/set logs
+/set temp-voice channel:#create-room
+/set temp-voice
 ```
 
-The new prefix is stored per server in `data/guild-prefixes.json`. After changing it, use the new prefix for subsequent commands.
+The bot logs voice join/leave/move events, message deletions, and deleted image attachments to the configured log channel. Members joining the temporary voice trigger channel are moved to a new channel in the same category when applicable. Empty temporary channels are deleted automatically. The bot needs **Manage Channels** and **Move Members** permissions.
 
-Set a text channel for server logs with:
+## Moderation
+
+Moderation commands include `/kick`, `/ban`, `/timeout`, `/mute`, `/purge`, `/jail`, `/unjail`, `/avatar`, and `/cover`. For example:
 
 ```text
-!set logs #mod-logs
-!set logs off
+/kick member:@member reason:spam
+/timeout member:@member duration:10m reason:spam
+/purge amount:25
+/jail member:@member
 ```
 
-The bot logs voice join/leave/move events, message deletions, and deleted image attachments there.
+The same actions are available under `/mod` subcommands. The bot needs the corresponding moderation permissions, with its highest role above members and roles it must manage.
 
-## Temporary Voice Channels
-
-Choose a voice channel as the join-to-create trigger:
-
-```text
-!set temp voice #create-room
-!set temp voice off
-```
-
-Members who join the configured channel are moved into a new voice channel, created in the same category when applicable. Empty temporary channels are deleted automatically. The configuration is saved per server in `data/guild-temp-voice.json`. The bot needs **Manage Channels** and **Move Members** permissions.
+Configure the jail role with `/set jail-role role:@Jailed`. Jailing removes the member's assigned roles and applies the jail role; unjailing removes that role and restores saved roles that still exist. Role snapshots and the configured jail role are stored in `data/guild-jails.json`. Configure the jail role's channel permissions separately.
 
 ## Autoresponders
 
-Server members with **Manage Server** can add exact-match autoresponders:
+Members with **Manage Server** can add exact-match autoresponders:
 
 ```text
-!autoresponder add hello | Hi there!
-!autoresponder list
-!autoresponder remove hello
+/autoresponder add trigger:hello response:Hi there!
+/autoresponder list
+/autoresponder remove trigger:hello
 ```
 
-Triggers are case-insensitive and saved per server in `data/guild-autoresponders.json`.
+Triggers are case-insensitive and saved per server in `data/guild-autoresponders.json`. Autoresponders continue to match ordinary messages; commands themselves use slash interactions.
 
 ## Antinuke
 
-Antinuke is disabled by default. A member with **Manage Server** can configure it with:
+Antinuke is disabled by default. Members with **Manage Server** can configure it with `/antinuke enable`, `/antinuke disable`, and `/antinuke status`. Choose the response with `/antinuke set-punishment punishment:timeout`, using `timeout`, `kick`, `ban`, or `none`.
 
-```text
-!antinuke enable
-!antinuke set punishment timeout
-!antinuke whitelist role add @TrustedStaff
-!antinuke whitelist category add #private-category
-!antinuke whitelist channel add #important-channel
-!antinuke whitelist list
-!antinuke status
-```
+Whitelist actors and targets with the `/antinuke whitelist-role`, `/antinuke whitelist-category`, and `/antinuke whitelist-channel` command groups. Each group provides `add`, `remove`, and `list` subcommands. `/antinuke whitelist-list` shows all exemptions.
 
-Use `!antinuke whitelist <role|category|channel> remove <mention or ID>` to remove an exemption, or `!antinuke disable` to turn protection off. Whitelisted roles exempt their members from penalties. Whitelisted channels and categories exempt deletion of that channel or channels inside that category. SINCLAIR monitors channel/category deletion, role deletion, member bans/kicks, bot additions, and webhook deletion. Three matching actions by one non-whitelisted member within ten seconds trigger a ten-minute timeout. The bot needs **View Audit Log** and **Moderate Members** permissions, and its role must be high enough to timeout potential offenders.
-
-Choose the response with `!antinuke set punishment <timeout|kick|ban|none>`. `none` detects and logs threshold events without automatically punishing the actor. The default is `timeout` for ten minutes. The bot needs **Moderate Members** for timeouts, **Kick Members** for kicks, or **Ban Members** for bans, plus a role above the actor.
+Whitelisted roles exempt their members from penalties. Whitelisted channels and categories exempt deletion of that channel or channels inside that category. SINCLAIR monitors channel/category deletion, role deletion, member bans/kicks, bot additions, and webhook deletion. Three matching actions by one non-whitelisted member within ten seconds trigger the configured action. The bot needs **View Audit Log** and the permission for the selected action; its role must be high enough to moderate potential offenders. The default action is a ten-minute timeout. `none` detects and logs threshold events without automatically punishing the actor.
 
 ## Welcome Messages
 
-Set a channel to enable welcome messages, then customize the message and embed:
+Use `/welcome channel`, `/welcome message`, `/welcome status`, `/welcome disable`, and `/welcome preview` to manage welcome messages. `/set-welcome-channel` and `/set-welcome-message` are also available. Supported placeholders are `{user}`, `{username}`, `{server}`, and `{memberCount}`.
 
-```text
-/set-welcome-channel channel:#welcome
-/set-welcome-message message:Welcome {user} to {server}!
-/edit-embed
-!welcome preview
-```
+Use `/welcome embed edit` or `/edit-embed` to open the prefilled embed editor. Leave a field blank to clear it. `/welcome embed clear` clears all embed fields; select a field to clear only that field.
 
-`/edit-embed` opens a prefilled form for title, description, color, footer, and image URL; leave a field blank to clear it. The original prefix commands remain available. Supported placeholders are `{user}`, `{username}`, `{server}`, and `{memberCount}`. Use `!welcome disable` to stop sending welcomes. Settings persist per server in `data/guild-welcome.json`. Enable the **Server Members Intent** in the Discord Developer Portal and grant the bot permission to view and send messages in the welcome channel. Welcome configuration slash commands require **Manage Server**; all slash commands are registered in each server when the bot starts.
+Welcome settings persist per server in `data/guild-welcome.json`. Enable the **Server Members Intent** and grant the bot permission to view and send messages in the welcome channel. Welcome configuration commands require **Manage Server**.
 
-## Help and Jail
+## Help and Tests
 
-Use `/help` or the current-prefix command `!help` to list the available commands. Server members with **Manage Roles** can configure and use jail commands:
-
-```text
-/set jail-role role:@Jailed
-/jail member:@member
-/unjail member:@member
-```
-
-The bot needs **Manage Roles**, and its highest role must be above the jail role and the member's roles. Jailing removes the member's assigned roles and applies the configured jail role; unjailing removes that role and restores the saved roles that still exist. Role snapshots and the configured jail role are stored in `data/guild-jails.json`. Configure the jail role's channel permissions separately.
-
-Run the tests with `npm test`.
+Use `/help` to list commands. Run the test suite with `npm test`.
