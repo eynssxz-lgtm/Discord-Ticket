@@ -76,12 +76,13 @@ async function handleMessage(message, store) {
   }
   if (authorStatus) store.clear(guild.id, author.id);
 
-  const fields = [];
+  const embeds = [];
   if (authorStatus) {
     const duration = formatAfkDuration(authorStatus.since);
-    fields.push({
-      name: `${message.member?.displayName || author.username}, welcome back`,
-      value: `You were AFK for ${duration}. Your status was removed.`,
+    embeds.push({
+      color: 0x000000,
+      title: `${message.member?.displayName || author.username}, welcome back`,
+      description: `You were AFK for ${duration}.`,
     });
   }
 
@@ -92,20 +93,17 @@ async function handleMessage(message, store) {
     const status = store.get(guild.id, user.id);
     if (status) {
       const duration = formatAfkDuration(status.since);
-      fields.push({
-        name: `${user.globalName || user.username || 'Member'} is AFK`,
-        value: `Away for ${duration}. Reason: ${status.reason.slice(0, MAX_REASON_LENGTH)}`,
+      embeds.push({
+        color: 0x000000,
+        title: `<@${user.id}> is AFK`,
+        description: `Away for ${duration}. Reason: ${status.reason.slice(0, MAX_REASON_LENGTH)}`,
       });
     }
   }
 
-  if (fields.length === 0) return;
+  if (embeds.length === 0) return;
   await message.channel.send({
-    embeds: [{
-      color: authorStatus ? 0x57f287 : 0x5865f2,
-      title: 'AFK Update',
-      fields,
-    }],
+    embeds,
     allowedMentions: { parse: [] },
   });
 }

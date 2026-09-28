@@ -19,6 +19,7 @@ const afkStore = require('./afkStore');
 const welcome = require('./welcome');
 const welcomeStore = require('./welcomeStore');
 const welcomeInteractions = require('./welcomeInteractions');
+const { wrapCommandReplyMethods } = require('./commandReplies');
 const { jailMember, unjailMember } = require('./jail');
 const { parseDuration, buildUserCardEmbed } = require('./moderation');
 const { buildHelpEmbed, MODERATION_PERMISSIONS } = require('./commandInteractions');
@@ -121,7 +122,12 @@ function parsePrefixCommand(content) {
   const match = /^,([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(content.trim());
   if (!match) return null;
   const rawArgs = (match[2] || '').trim();
-  return { name: match[1].toLowerCase(), rawArgs, args: tokenizePrefixArgs(rawArgs) };
+  const commandName = match[1].toLowerCase();
+  return {
+    name: commandName === 'av' ? 'avatar' : commandName,
+    rawArgs,
+    args: tokenizePrefixArgs(rawArgs),
+  };
 }
 
 function createPrefixInteraction(message, { subcommand, group = null, values = {} } = {}) {
@@ -853,6 +859,7 @@ async function handlePrefixWelcome(message, command) {
 
 async function handlePrefixCommand(message) {
   if (!message.guild || message.author.bot) return false;
+  wrapCommandReplyMethods(message, ['reply']);
   const command = parsePrefixCommand(message.content);
   if (!command) return false;
   if (command.name === 'ticket') return handleTicketMessage(message);

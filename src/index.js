@@ -20,6 +20,7 @@ const tempVoice = require('./tempVoice');
 const afk = require('./afk');
 const afkStore = require('./afkStore');
 const { buildDeletedMessageLog } = require('./messageLogs');
+const { wrapCommandReplyMethods } = require('./commandReplies');
 
 const token = process.env.DISCORD_TOKEN;
 const applicationId = process.env.DISCORD_CLIENT_ID;
@@ -115,6 +116,7 @@ client.on('messageDelete', async (message) => {
 
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.inGuild()) return;
+  wrapCommandReplyMethods(interaction);
 
   if (interaction.isButton?.()) {
     try {

@@ -253,7 +253,7 @@ function buildHelpEmbed() {
           '`,kick @member [reason]`', '`,ban @member [reason]`',
           '`,timeout @member 10m [reason]`', '`,mute @member [reason]`',
           '`,purge [amount]`', '`,jail @member`', '`,unjail @member`',
-          '`,avatar [@member]`', '`,cover [@member]`',
+          '`,av [@member]` (shortcut for `/avatar`)', '`,cover [@member]`',
         ].join('\n'),
       },
       {

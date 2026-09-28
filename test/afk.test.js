@@ -31,11 +31,13 @@ test('clears the author AFK status when they speak and notifies mentioned AFK us
 
   assert.equal(statuses.has('guild-1:author-1'), false);
   assert.equal(sent.length, 1);
-  const fields = sent[0].embeds[0].fields;
-  assert.match(fields[0].name, /welcome back/);
-  assert.match(fields[0].value, /You were AFK for 2 minutes/);
-  assert.match(fields[1].name, /Casey|Member/);
-  assert.match(fields[1].value, /Away for 1 minute, 5 seconds\. Reason: At lunch/);
+  assert.equal(sent[0].embeds.length, 2);
+  assert.equal(sent[0].embeds[0].title, 'Casey, welcome back');
+  assert.match(sent[0].embeds[0].description, /You were AFK for 2 minutes/);
+  assert.doesNotMatch(sent[0].embeds[0].description, /status was removed/i);
+  assert.equal(sent[0].embeds[1].title, '<@mentioned-1> is AFK');
+  assert.match(sent[0].embeds[1].description, /Away for 1 minute, 5 seconds\. Reason: At lunch/);
+  assert.doesNotMatch(sent[0].embeds[0].title, /AFK Update/);
   assert.deepEqual(sent[0].allowedMentions, { parse: [] });
 });
 
@@ -52,7 +54,8 @@ test('notifies when a message mentions an AFK user', async () => {
   await handleMessage(message, makeStore(statuses));
 
   assert.equal(sent.length, 1);
-  assert.match(sent[0].embeds[0].fields[0].value, /Away for 1 minute\. Reason: In a meeting/);
+  assert.equal(sent[0].embeds[0].title, '<@away-1> is AFK');
+  assert.match(sent[0].embeds[0].description, /Away for 1 minute\. Reason: In a meeting/);
 });
 
 test('formats AFK durations using up to two readable units', () => {

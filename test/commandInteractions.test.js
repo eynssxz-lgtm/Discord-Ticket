@@ -28,6 +28,12 @@ test('parses comma-prefixed aliases for regular slash command families', () => {
     rawArgs: 'embed clear title',
     args: ['embed', 'clear', 'title'],
   });
+  assert.deepEqual(parsePrefixCommand(',av @member'), {
+    name: 'avatar',
+    rawArgs: '@member',
+    args: ['@member'],
+  });
+  assert.equal(parsePrefixCommand(',cover @member').name, 'cover');
   assert.equal(parsePrefixCommand('/timeout member:@member duration:10m'), null);
 });
 
@@ -83,6 +89,8 @@ test('help lists the supported command families and ticket setup', () => {
   assert.match(text, /`,ticket create @member`/);
   assert.match(text, /`,ticket transcript`/);
   assert.match(text, /`,timeout @member 10m \[reason\]`/);
+  assert.match(text, /`,av \[@member\]`/);
+  assert.match(text, /`,cover \[@member\]`/);
   assert.match(text, /`,autoresponder add trigger response`/);
   assert.match(text, /`,antinuke enable\|disable\|status`/);
   assert.match(text, /`,welcome status\|disable\|preview`/);
