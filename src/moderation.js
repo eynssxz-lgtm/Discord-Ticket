@@ -56,16 +56,18 @@ async function resolveTargetMember(message, rawTarget) {
 function buildUserCardEmbed(member, kind = 'avatar') {
   const user = member?.user || member;
   const username = user.globalName || user.username || 'Unknown User';
-  const avatarUrl = user.avatarURL?.() || user.displayAvatarURL?.() || null;
-  const bannerUrl = user.bannerURL?.() || user.coverURL?.() || null;
+  const imageOptions = { size: 4096 };
+  const avatarUrl = user.displayAvatarURL?.(imageOptions)
+    || user.avatarURL?.(imageOptions)
+    || null;
+  const bannerUrl = user.bannerURL?.(imageOptions) || user.coverURL?.(imageOptions) || null;
   const imageUrl = kind === 'cover' ? bannerUrl : avatarUrl;
 
   return {
     color: 0x5865f2,
     title: `${username}'s ${kind === 'cover' ? 'banner photo' : 'avatar'}`,
-    thumbnail: kind !== 'cover' && avatarUrl ? { url: avatarUrl } : undefined,
     image: imageUrl ? { url: imageUrl } : undefined,
-    footer: { text: user.id || 'Unknown ID' },
+    footer: { text: `User ID: ${user.id || 'Unknown ID'}` },
   };
 }
 

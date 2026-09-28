@@ -1,7 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { getCommands, buildHelpEmbed } = require('../src/commandInteractions');
-const { buildAfkEmbed, parsePrefixCommand, parseTicketMessage } = require('../src/commandHandler');
+const {
+  buildAfkEmbed,
+  getRepliedUser,
+  parsePrefixCommand,
+  parseTicketMessage,
+} = require('../src/commandHandler');
 const welcomeInteractions = require('../src/welcomeInteractions');
 
 test('parses comma-prefixed ticket commands and ignores other messages', () => {
@@ -12,6 +17,10 @@ test('parses comma-prefixed ticket commands and ignores other messages', () => {
   assert.deepEqual(parseTicketMessage(',TICKET logs #transcripts'), {
     action: 'logs',
     args: ['#transcripts'],
+  });
+  assert.deepEqual(parseTicketMessage(',ticket set transcript-channel #transcripts'), {
+    action: 'set',
+    args: ['transcript-channel', '#transcripts'],
   });
   assert.deepEqual(parseTicketMessage(',ticket'), { action: 'help', args: [] });
   assert.equal(parseTicketMessage('ticket setup #tickets @Support'), null);
@@ -37,9 +46,20 @@ test('parses comma-prefixed aliases for regular slash command families', () => {
   assert.equal(parsePrefixCommand('/timeout member:@member duration:10m'), null);
 });
 
+test('resolves the user from a replied-to message for avatar and cover shortcuts', async () => {
+  const repliedUser = { id: 'user-123', username: 'Taylor' };
+  const message = {
+    reference: { messageId: 'message-456' },
+    channel: { messages: { fetch: async () => ({ author: repliedUser }) } },
+  };
+
+  assert.equal(await getRepliedUser(message), repliedUser);
+  assert.equal(await getRepliedUser({ reference: null }), null);
+});
+
 test('builds the AFK confirmation as an embed containing the reason', () => {
-  const embed = buildAfkEmbed('Away for lunch');
-  assert.equal(embed.title, 'You are now AFK');
+  const embed = buildAfkEmbed({ id: 'user-123' }, 'Away for lunch');
+  assert.equal(embed.title, '<@user-123> is AFK');
   assert.equal(embed.description, 'Away for lunch');
   assert.match(embed.footer.text, /clears when you send a message/);
 });
@@ -85,7 +105,7 @@ test('help lists the supported command families and ticket setup', () => {
   assert.match(text, /`\/antinuke set-punishment punishment`/);
   assert.match(text, /`,ticket setup #tickets @Support \[#panel\]`/);
   assert.match(text, /`,ticket panel \[#channel\]`/);
-  assert.match(text, /`,ticket logs #transcripts`/);
+  assert.match(text, /`,ticket set transcript-channel #transcripts`/);
   assert.match(text, /`,ticket create @member`/);
   assert.match(text, /`,ticket transcript`/);
   assert.match(text, /`,timeout @member 10m \[reason\]`/);

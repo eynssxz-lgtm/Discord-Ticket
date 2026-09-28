@@ -260,7 +260,8 @@ function buildHelpEmbed() {
         name: 'Tickets',
         value: [
           '`,ticket setup #tickets @Support [#panel]`',
-          '`,ticket panel [#channel]`', '`,ticket logs #transcripts`',
+          '`,ticket panel [#channel]`',
+          '`,ticket set transcript-channel #transcripts`',
           '`,ticket create @member`', '`,ticket transcript`', '`,ticket close [#channel]`',
           '`/ticket create member:@user`', '`/ticket close [channel]`',
         ].join('\n'),

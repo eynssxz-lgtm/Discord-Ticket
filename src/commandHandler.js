@@ -29,10 +29,10 @@ const TICKET_CLOSE_BUTTON_ID = 'ticket:close';
 const MAX_TRANSCRIPT_MESSAGES = 5_000;
 const MAX_TRANSCRIPT_BYTES = 7 * 1024 * 1024;
 
-function buildAfkEmbed(reason) {
+function buildAfkEmbed(user, reason) {
   return {
     color: 0x57f287,
-    title: 'You are now AFK',
+    title: `<@${user.id}> is AFK`,
     description: reason,
     footer: { text: 'Your AFK status clears when you send a message.' },
   };
@@ -130,9 +130,16 @@ function parsePrefixCommand(content) {
   };
 }
 
+async function getRepliedUser(message) {
+  if (!message.reference?.messageId) return null;
+  const repliedMessage = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+  return repliedMessage?.author || null;
+}
+
 function createPrefixInteraction(message, { subcommand, group = null, values = {} } = {}) {
   const resolveUser = (value) => {
     if (!value) return null;
+    if (typeof value === 'object') return value.user || value;
     const id = value.match(/^(?:<@!?(\d+)>|(\d+))$/)?.slice(1).find(Boolean);
     if (!id) return null;
     return message.mentions.users.get(id)
@@ -508,7 +515,7 @@ async function runTicket(interaction) {
   const ticketStore = require('./ticketStore');
   const config = ticketStore.getConfig(interaction.guildId);
   if (!config.categoryId || !config.supportRoleId) {
-    await interaction.reply({ content: 'Set up tickets first with `/ticket setup category:@tickets role:@Support`.', ephemeral: true });
+    await interaction.reply({ content: 'Set up tickets first with `,ticket setup #category @support-role [#panel-channel]`.', ephemeral: true });
     return;
   }
 
@@ -551,7 +558,12 @@ async function handleTicketMessage(message) {
   const command = parseTicketMessage(message.content);
   if (!command) return false;
 
-  const { action, args } = command;
+  let { action } = command;
+  let args = command.args;
+  if (action === 'set' && args[0]?.toLowerCase() === 'transcript-channel') {
+    action = 'logs';
+    args = args.slice(1);
+  }
   const ticketStore = require('./ticketStore');
   const config = ticketStore.getConfig(message.guild.id);
   const manageGuild = message.member.permissions.has(PermissionFlagsBits.ManageGuild);
@@ -621,7 +633,7 @@ async function handleTicketMessage(message) {
     const channelId = getMentionedId(args[0] || '', 'channel');
     const channel = channelId && message.guild.channels.cache.get(channelId);
     if (!channel?.isTextBased?.() || !channel.send) {
-      await message.reply('Usage: `,ticket logs #transcript-channel` or `,ticket logs off`');
+      await message.reply('Usage: `,ticket set transcript-channel #channel` or `,ticket set transcript-channel off`');
       return true;
     }
     ticketStore.setConfig(message.guild.id, { transcriptChannelId: channel.id });
@@ -650,7 +662,7 @@ async function handleTicketMessage(message) {
   }
 
   if (!['transcript', 'close'].includes(action)) {
-    await message.reply('Ticket commands: `,ticket setup`, `,ticket panel`, `,ticket logs`, `,ticket create @member`, `,ticket transcript`, `,ticket close [#channel]`.');
+    await message.reply('Ticket commands: `,ticket setup`, `,ticket panel`, `,ticket set transcript-channel #channel`, `,ticket create @member`, `,ticket transcript`, `,ticket close [#channel]`.');
     return true;
   }
 
@@ -881,7 +893,7 @@ async function handlePrefixCommand(message) {
     if (member && typeof member.setNickname === 'function') {
       await require('./afk').applyAfkNickname(member);
     }
-    await message.reply({ embeds: [buildAfkEmbed(reason)] });
+    await message.reply({ embeds: [buildAfkEmbed(message.author, reason)] });
     return true;
   }
 
@@ -920,6 +932,9 @@ async function handlePrefixCommand(message) {
 
   if (MODERATION_PERMISSIONS[name] || ['avatar', 'cover'].includes(name)) {
     const values = { member: args[0] || null };
+    if (['avatar', 'cover'].includes(name) && !values.member) {
+      values.member = await getRepliedUser(message);
+    }
     if (name === 'purge') values.amount = args[0] || null;
     if (name === 'timeout') {
       values.duration = args[1] || null;
@@ -1009,7 +1024,7 @@ async function handleCommand(interaction) {
       const afk = require('./afk');
       await afk.applyAfkNickname(member);
     }
-    await interaction.reply({ embeds: [buildAfkEmbed(reason)], ephemeral: true });
+    await interaction.reply({ embeds: [buildAfkEmbed(interaction.user, reason)], ephemeral: true });
     return true;
   }
   if (name === 'autoresponder') {
@@ -1036,5 +1051,6 @@ module.exports.handleTicketButton = handleTicketButton;
 module.exports.handleTicketMessage = handleTicketMessage;
 module.exports.handlePrefixCommand = handlePrefixCommand;
 module.exports.parsePrefixCommand = parsePrefixCommand;
+module.exports.getRepliedUser = getRepliedUser;
 module.exports.buildAfkEmbed = buildAfkEmbed;
 module.exports.parseTicketMessage = parseTicketMessage;

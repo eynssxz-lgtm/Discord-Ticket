@@ -33,21 +33,33 @@ test('resolves a target member from a reply when no mention is provided', async 
 });
 
 test('builds an avatar or cover embed with the correct image source', () => {
+  const requestedSizes = [];
   const member = {
     user: {
       tag: 'alice#0001',
       id: '123',
-      avatarURL: () => 'https://cdn.example.com/avatar.png',
-      bannerURL: () => 'https://cdn.example.com/cover.png',
+      username: 'alice',
+      avatarURL: (options) => {
+        requestedSizes.push(options.size);
+        return 'https://cdn.example.com/avatar.png';
+      },
+      bannerURL: (options) => {
+        requestedSizes.push(options.size);
+        return 'https://cdn.example.com/cover.png';
+      },
     },
-    displayAvatarURL: () => 'https://cdn.example.com/avatar.png',
   };
 
   const avatarEmbed = buildUserCardEmbed(member, 'avatar');
   assert.equal(avatarEmbed.image.url, 'https://cdn.example.com/avatar.png');
+  assert.equal(avatarEmbed.thumbnail, undefined);
+  assert.equal(avatarEmbed.footer.text, 'User ID: 123');
 
   const coverEmbed = buildUserCardEmbed(member, 'cover');
   assert.equal(coverEmbed.image.url, 'https://cdn.example.com/cover.png');
   assert.equal(coverEmbed.thumbnail, undefined);
   assert.match(coverEmbed.title, /banner photo/);
+  assert.equal(coverEmbed.footer.text, 'User ID: 123');
+  assert.ok(requestedSizes.length >= 2);
+  assert.ok(requestedSizes.every((size) => size === 4096));
 });

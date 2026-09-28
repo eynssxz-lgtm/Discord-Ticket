@@ -65,7 +65,7 @@ Triggers are case-insensitive and saved per server in `data/guild-autoresponders
 
 Members with **Manage Server** can run `,ticket setup #category @support-role [#panel-channel]`. `,ticket panel [#channel]` posts or reposts the panel. Members click **Create Ticket** to open a private channel visible to them and the support role. Each member can have one open ticket at a time.
 
-Set transcript delivery with `,ticket logs #transcript-channel`; transcripts are uploaded there when a ticket is closed with the button, `,ticket close`, or `/ticket close`. Use `,ticket transcript` inside an open ticket to upload its transcript without closing it. The ticket owner or support staff can manage or close a ticket. Staff can also create a ticket with `/ticket create member:@user`.
+Set transcript delivery with `,ticket set transcript-channel #transcript-channel` (the shorter `,ticket logs #transcript-channel` alias also works); transcripts are uploaded there when a ticket is closed with the button, `,ticket close`, or `/ticket close`. Use `,ticket transcript` inside an open ticket to upload its transcript without closing it. The ticket owner or support staff can manage or close a ticket. Staff can also create a ticket with `/ticket create member:@user`.
 
 ## Antinuke
 
