@@ -3,7 +3,11 @@ const assert = require('node:assert/strict');
 const { getCommands, buildHelpEmbed } = require('../src/commandInteractions');
 const {
   buildAfkEmbed,
+  buildTicketOpenRow,
+  buildTicketPanelEmbed,
+  createTicketChannel,
   getRepliedUser,
+  parseTicketPanelSettings,
   parsePrefixCommand,
   parseTicketMessage,
 } = require('../src/commandHandler');
@@ -14,6 +18,10 @@ test('parses comma-prefixed ticket commands and ignores other messages', () => {
     action: 'setup',
     args: ['#tickets', '@Support', '#panel'],
   });
+  assert.deepEqual(parseTicketMessage(',ticket setup #tickets @Default #panel "Support" "Pick a type" "Technical" @Tech @Lead'), {
+    action: 'setup',
+    args: ['#tickets', '@Default', '#panel', 'Support', 'Pick a type', 'Technical', '@Tech', '@Lead'],
+  });
   assert.deepEqual(parseTicketMessage(',TICKET logs #transcripts'), {
     action: 'logs',
     args: ['#transcripts'],
@@ -21,6 +29,10 @@ test('parses comma-prefixed ticket commands and ignores other messages', () => {
   assert.deepEqual(parseTicketMessage(',ticket set transcript-channel #transcripts'), {
     action: 'set',
     args: ['transcript-channel', '#transcripts'],
+  });
+  assert.deepEqual(parseTicketMessage(',ticket panel #support "Help desk" "Pick a type" "General help" "Billing"'), {
+    action: 'panel',
+    args: ['#support', 'Help desk', 'Pick a type', 'General help', 'Billing'],
   });
   assert.deepEqual(parseTicketMessage(',ticket'), { action: 'help', args: [] });
   assert.equal(parseTicketMessage('ticket setup #tickets @Support'), null);
@@ -57,9 +69,73 @@ test('resolves the user from a replied-to message for avatar and cover shortcuts
   assert.equal(await getRepliedUser({ reference: null }), null);
 });
 
+test('builds a ticket panel embed and up to five labeled create buttons', () => {
+  const embed = buildTicketPanelEmbed('Get support', 'Choose what you need help with.');
+  assert.equal(embed.title, 'Get support');
+  assert.equal(embed.description, 'Choose what you need help with.');
+  assert.equal(embed.color, 0x000000);
+
+  const row = buildTicketOpenRow(['General', 'Billing', 'Technical']);
+  const buttons = row.toJSON().components;
+  assert.deepEqual(buttons.map(({ label }) => label), ['General', 'Billing', 'Technical']);
+  assert.ok(buttons.every(({ custom_id }) => custom_id.startsWith('ticket:open:')));
+  assert.deepEqual(buttons.map(({ custom_id }) => custom_id), ['ticket:open:0', 'ticket:open:1', 'ticket:open:2']);
+  assert.throws(() => buildTicketOpenRow(['1', '2', '3', '4', '5', '6']).toJSON());
+});
+
+test('parses one to three support roles for each ticket button', () => {
+  const guild = {
+    roles: {
+      cache: new Map([['111', {}], ['222', {}], ['333', {}], ['444', {}]]),
+    },
+  };
+  const parsed = parseTicketPanelSettings([
+    'Help', 'Choose a topic', 'General', '<@&111>', '<@&222>', 'Billing', '<@&333>',
+  ], guild);
+
+  assert.deepEqual(parsed.settings.buttonLabels, ['General', 'Billing']);
+  assert.deepEqual(parsed.settings.buttonRoleIds, [['111', '222'], ['333']]);
+  assert.match(parseTicketPanelSettings([
+    'Help', 'Choose a topic', 'General', '<@&111>', '<@&222>', '<@&333>', '<@&444>',
+  ], guild).error, /one to three support-role mentions/);
+});
+
+test('creates a ticket with only the support roles configured for its button', async () => {
+  let channelOptions;
+  const ticketChannel = { send: async () => {} };
+  const guild = {
+    id: 'guild-id',
+    client: { user: { id: 'bot-id' } },
+    channels: {
+      cache: { find: () => null },
+      create: async (options) => {
+        channelOptions = options;
+        return ticketChannel;
+      },
+    },
+  };
+
+  await createTicketChannel(guild, { id: 'user-id', username: 'Casey' }, {
+    categoryId: 'category-id',
+    supportRoleId: 'legacy-role',
+    buttonRoleIds: [['general-role'], ['billing-role', 'billing-lead-role']],
+  }, 1);
+
+  const overwriteIds = channelOptions.permissionOverwrites.map(({ id }) => id);
+  assert.ok(overwriteIds.includes('billing-role'));
+  assert.ok(overwriteIds.includes('billing-lead-role'));
+  assert.ok(!overwriteIds.includes('general-role'));
+  assert.ok(!overwriteIds.includes('legacy-role'));
+});
+
 test('builds the AFK confirmation as an embed containing the reason', () => {
-  const embed = buildAfkEmbed({ id: 'user-123' }, 'Away for lunch');
-  assert.equal(embed.title, '<@user-123> is AFK');
+  const embed = buildAfkEmbed({
+    id: 'user-123',
+    username: 'Casey',
+    displayAvatarURL: ({ size }) => `https://cdn.example.com/avatar-${size}.png`,
+  }, 'Away for lunch');
+  assert.equal(embed.author.name, 'Casey is AFK');
+  assert.equal(embed.author.icon_url, 'https://cdn.example.com/avatar-128.png');
   assert.equal(embed.description, 'Away for lunch');
   assert.match(embed.footer.text, /clears when you send a message/);
 });
@@ -103,8 +179,10 @@ test('help lists the supported command families and ticket setup', () => {
   assert.match(text, /`\/afk \[reason\]`/);
   assert.match(text, /`\/autoresponder add trigger response`/);
   assert.match(text, /`\/antinuke set-punishment punishment`/);
-  assert.match(text, /`,ticket setup #tickets @Support \[#panel\]`/);
-  assert.match(text, /`,ticket panel \[#channel\]`/);
+  assert.match(text, /`,ticket setup #tickets @Default \[#panel\] "title" "description" "button" @Role/);
+  assert.match(text, /`,ticket panel \[#channel\] "title" "description" "button" @Role/);
+  assert.match(text, /1-3 support roles/);
+  assert.match(text, /`,ticket panel \[#channel\] "title" "description" "button" @Role/);
   assert.match(text, /`,ticket set transcript-channel #transcripts`/);
   assert.match(text, /`,ticket create @member`/);
   assert.match(text, /`,ticket transcript`/);

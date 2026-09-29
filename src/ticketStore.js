@@ -23,6 +23,10 @@ function getConfig(guildId) {
     categoryId: null,
     supportRoleId: null,
     panelChannelId: null,
+    panelTitle: 'Support Tickets',
+    panelDescription: 'Select a button below to create a private support ticket.',
+    buttonLabels: ['Create Ticket'],
+    buttonRoleIds: null,
     transcriptChannelId: null,
     ...readConfigs()[guildId],
   };

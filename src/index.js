@@ -19,7 +19,7 @@ const commandHandler = require('./commandHandler');
 const tempVoice = require('./tempVoice');
 const afk = require('./afk');
 const afkStore = require('./afkStore');
-const { buildDeletedMessageLog } = require('./messageLogs');
+const { buildDeletedMessageLog, buildServerLogPayload } = require('./messageLogs');
 const { wrapCommandReplyMethods } = require('./commandReplies');
 
 const token = process.env.DISCORD_TOKEN;
@@ -73,7 +73,7 @@ async function getLogChannel(guild) {
 async function sendServerLog(guild, content) {
   const channel = await getLogChannel(guild);
   if (!channel || !channel.isTextBased?.()) return;
-  await channel.send(content).catch(() => null);
+  await channel.send(buildServerLogPayload(content)).catch(() => null);
 }
 
 client.on('voiceStateUpdate', async (oldState, newState) => {

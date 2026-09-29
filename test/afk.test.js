@@ -18,11 +18,18 @@ test('clears the author AFK status when they speak and notifies mentioned AFK us
   const sent = [];
   const message = {
     guild: { id: 'guild-1' },
-    author: { id: 'author-1', username: 'Casey', bot: false },
+    author: {
+      id: 'author-1', username: 'Casey', bot: false,
+      displayAvatarURL: ({ size }) => `https://cdn.example.com/author-${size}.png`,
+    },
     member: { displayName: 'Casey' },
     mentions: { users: new Map([
       ['author-1', { id: 'author-1' }],
-      ['mentioned-1', { id: 'mentioned-1' }],
+      ['mentioned-1', {
+        id: 'mentioned-1',
+        username: 'Jordan',
+        displayAvatarURL: ({ size }) => `https://cdn.example.com/mentioned-${size}.png`,
+      }],
     ]) },
     channel: { send: async (payload) => sent.push(payload) },
   };
@@ -32,12 +39,14 @@ test('clears the author AFK status when they speak and notifies mentioned AFK us
   assert.equal(statuses.has('guild-1:author-1'), false);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].embeds.length, 2);
-  assert.equal(sent[0].embeds[0].title, 'Casey, welcome back');
+  assert.equal(sent[0].embeds[0].author.name, 'Casey, welcome back');
+  assert.equal(sent[0].embeds[0].author.icon_url, 'https://cdn.example.com/author-128.png');
   assert.match(sent[0].embeds[0].description, /You were AFK for 2 minutes/);
   assert.doesNotMatch(sent[0].embeds[0].description, /status was removed/i);
-  assert.equal(sent[0].embeds[1].title, '<@mentioned-1> is AFK');
+  assert.equal(sent[0].embeds[1].author.name, 'Jordan is AFK');
+  assert.equal(sent[0].embeds[1].author.icon_url, 'https://cdn.example.com/mentioned-128.png');
   assert.match(sent[0].embeds[1].description, /Away for 1 minute, 5 seconds\. Reason: At lunch/);
-  assert.doesNotMatch(sent[0].embeds[0].title, /AFK Update/);
+  assert.doesNotMatch(sent[0].embeds[0].author.name, /AFK Update/);
   assert.deepEqual(sent[0].allowedMentions, { parse: [] });
 });
 
@@ -54,7 +63,7 @@ test('notifies when a message mentions an AFK user', async () => {
   await handleMessage(message, makeStore(statuses));
 
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].embeds[0].title, '<@away-1> is AFK');
+  assert.equal(sent[0].embeds[0].author.name, 'Member is AFK');
   assert.match(sent[0].embeds[0].description, /Away for 1 minute\. Reason: In a meeting/);
 });
 

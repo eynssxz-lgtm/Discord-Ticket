@@ -1,6 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildDeletedMessageLog } = require('../src/messageLogs');
+const { buildDeletedMessageLog, buildServerLogPayload } = require('../src/messageLogs');
+
+test('formats server audit messages such as voice updates as black embeds', () => {
+  const payload = buildServerLogPayload('Casey joined <#voice-123>.');
+
+  assert.equal(payload.embeds.length, 1);
+  assert.equal(payload.embeds[0].color, 0x000000);
+  assert.equal(payload.embeds[0].title, 'Server log');
+  assert.equal(payload.embeds[0].description, 'Casey joined <#voice-123>.');
+  assert.deepEqual(payload.allowedMentions, { parse: [] });
+});
 
 test('builds a deleted-message embed with author, channel, time, and content', () => {
   const message = {
@@ -19,6 +29,7 @@ test('builds a deleted-message embed with author, channel, time, and content', (
   const payload = buildDeletedMessageLog(message);
   const [embed] = payload.embeds;
   assert.equal(embed.title, 'Message deleted');
+  assert.equal(embed.color, 0x000000);
   assert.equal(embed.author.name, 'Casey#1234');
   assert.equal(embed.author.icon_url, 'https://cdn.example.com/avatar.png');
   assert.equal(embed.description, 'Please review this update.');
@@ -44,4 +55,24 @@ test('includes an image attachment in the deleted-message embed', () => {
   const [embed] = payload.embeds;
   assert.equal(embed.description, '[No text content]');
   assert.equal(embed.image.url, 'https://cdn.example.com/deleted-image.png');
+});
+
+test('includes the deleted video itself as a file attachment in the log payload', () => {
+  const payload = buildDeletedMessageLog({
+    id: 'message-234',
+    content: 'Watch this clip',
+    author: { id: 'user-456', username: 'Casey' },
+    channel: { id: 'channel-789' },
+    attachments: new Map([['video-1', {
+      url: 'https://cdn.example.com/clip.mp4',
+      name: 'clip.mp4',
+      contentType: 'video/mp4',
+    }]]),
+  });
+
+  assert.equal(payload.embeds[0].description, 'Watch this clip');
+  assert.deepEqual(payload.files, [{
+    attachment: 'https://cdn.example.com/clip.mp4',
+    name: 'clip.mp4',
+  }]);
 });

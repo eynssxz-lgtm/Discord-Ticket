@@ -259,8 +259,9 @@ function buildHelpEmbed() {
       {
         name: 'Tickets',
         value: [
-          '`,ticket setup #tickets @Support [#panel]`',
-          '`,ticket panel [#channel]`',
+          '`,ticket setup #tickets @Default [#panel] "title" "description" "button" @Role [@Role2 @Role3] ...`',
+          '`,ticket panel [#channel] "title" "description" "button" @Role [@Role2 @Role3] ...`',
+          '(1-5 buttons, each with 1-3 support roles)',
           '`,ticket set transcript-channel #transcripts`',
           '`,ticket create @member`', '`,ticket transcript`', '`,ticket close [#channel]`',
           '`/ticket create member:@user`', '`/ticket close [channel]`',

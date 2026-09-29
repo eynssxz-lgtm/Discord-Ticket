@@ -23,6 +23,7 @@ const { wrapCommandReplyMethods } = require('./commandReplies');
 const { jailMember, unjailMember } = require('./jail');
 const { parseDuration, buildUserCardEmbed } = require('./moderation');
 const { buildHelpEmbed, MODERATION_PERMISSIONS } = require('./commandInteractions');
+const { buildLogEmbed } = require('./messageLogs');
 
 const TICKET_OPEN_BUTTON_ID = 'ticket:open';
 const TICKET_CLOSE_BUTTON_ID = 'ticket:close';
@@ -30,21 +31,80 @@ const MAX_TRANSCRIPT_MESSAGES = 5_000;
 const MAX_TRANSCRIPT_BYTES = 7 * 1024 * 1024;
 
 function buildAfkEmbed(user, reason) {
+  const displayName = user.globalName || user.username || 'Member';
+  const avatarUrl = user.displayAvatarURL?.({ size: 128 }) || user.avatarURL?.({ size: 128 });
   return {
-    color: 0x57f287,
-    title: `<@${user.id}> is AFK`,
+    color: 0x000000,
+    author: {
+      name: `${displayName} is AFK`,
+      ...(avatarUrl ? { icon_url: avatarUrl } : {}),
+    },
     description: reason,
     footer: { text: 'Your AFK status clears when you send a message.' },
   };
 }
 
-function buildTicketOpenRow() {
-  return new ActionRowBuilder().addComponents(
+function buildTicketOpenRow(labels = ['Create Ticket']) {
+  if (!Array.isArray(labels) || labels.length < 1 || labels.length > 5) {
+    throw new RangeError('Ticket panels must have between one and five buttons.');
+  }
+  return new ActionRowBuilder().addComponents(...labels.map((label, index) => (
     new ButtonBuilder()
-      .setCustomId(TICKET_OPEN_BUTTON_ID)
-      .setLabel('Create Ticket')
-      .setStyle(ButtonStyle.Primary),
-  );
+      .setCustomId(`${TICKET_OPEN_BUTTON_ID}:${index}`)
+      .setLabel(label)
+      .setStyle(ButtonStyle.Primary)
+  )));
+}
+
+function buildTicketPanelEmbed(title = 'Support Tickets', description = 'Select a button below to create a private support ticket.') {
+  return {
+    color: 0x000000,
+    title,
+    description,
+  };
+}
+
+function parseTicketPanelSettings(args, guild) {
+  const [panelTitle, panelDescription, ...buttonDefinitions] = args;
+  if (!panelTitle || panelTitle.length > 256 || !panelDescription || panelDescription.length > 4096) {
+    return { error: 'Provide a panel title and description before the button definitions.' };
+  }
+
+  const buttonLabels = [];
+  const buttonRoleIds = [];
+  let position = 0;
+  while (position < buttonDefinitions.length) {
+    const label = buttonDefinitions[position++];
+    if (!label.trim() || label.length > 80) {
+      return { error: 'Button labels must contain 1 to 80 characters.' };
+    }
+
+    const roleIds = [];
+    while (position < buttonDefinitions.length) {
+      const roleId = getMentionedId(buttonDefinitions[position], 'role');
+      if (!roleId) break;
+      if (!guild.roles.cache.has(roleId)) return { error: `Support role ${buttonDefinitions[position]} was not found.` };
+      roleIds.push(roleId);
+      position += 1;
+    }
+    if (roleIds.length === 0 || roleIds.length > 3) {
+      return { error: `Button "${label}" needs one to three support-role mentions.` };
+    }
+
+    buttonLabels.push(label);
+    buttonRoleIds.push(roleIds);
+    if (buttonLabels.length > 5) return { error: 'A ticket panel can have at most five buttons.' };
+  }
+  if (buttonLabels.length === 0) return { error: 'Add at least one labeled button and its support role.' };
+
+  return {
+    settings: {
+      panelTitle,
+      panelDescription,
+      buttonLabels,
+      buttonRoleIds,
+    },
+  };
 }
 
 function buildTicketCloseRow() {
@@ -56,18 +116,25 @@ function buildTicketCloseRow() {
   );
 }
 
-async function createTicketChannel(guild, user, config) {
+function getTicketMetadata(channel) {
+  const match = channel?.topic?.match(/^ticket-owner:(\d+)(?::button:(\d+))?$/);
+  if (!match) return null;
+  return { ownerId: match[1], buttonIndex: Number.parseInt(match[2] || '0', 10) };
+}
+
+async function createTicketChannel(guild, user, config, buttonIndex = 0) {
   const existing = guild.channels.cache.find((channel) => (
-    channel.parentId === config.categoryId && channel.topic === `ticket-owner:${user.id}`
+    channel.parentId === config.categoryId && getTicketMetadata(channel)?.ownerId === user.id
   ));
   if (existing) return { channel: existing, alreadyOpen: true };
 
   const username = user.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const supportRoleIds = config.buttonRoleIds?.[buttonIndex] || [config.supportRoleId];
   const channel = await guild.channels.create({
     name: `ticket-${username || user.id}`.slice(0, 100),
     type: ChannelType.GuildText,
     parent: config.categoryId,
-    topic: `ticket-owner:${user.id}`,
+    topic: `ticket-owner:${user.id}:button:${buttonIndex}`,
     permissionOverwrites: [
       {
         id: guild.id,
@@ -77,10 +144,10 @@ async function createTicketChannel(guild, user, config) {
         id: user.id,
         allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
       },
-      {
-        id: config.supportRoleId,
+      ...supportRoleIds.map((roleId) => ({
+        id: roleId,
         allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
-      },
+      })),
       {
         id: guild.client.user.id,
         allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
@@ -97,7 +164,7 @@ async function createTicketChannel(guild, user, config) {
 function parseTicketMessage(content) {
   const match = /^,ticket(?:\s+([\s\S]*))?$/i.exec(content.trim());
   if (!match) return null;
-  const [action, ...args] = (match[1] || '').trim().split(/\s+/).filter(Boolean);
+  const [action, ...args] = tokenizePrefixArgs((match[1] || '').trim());
   return { action: action?.toLowerCase() || 'help', args };
 }
 
@@ -189,7 +256,11 @@ function createPrefixInteraction(message, { subcommand, group = null, values = {
 }
 
 function isTicketStaff(member, config) {
-  return Boolean(member?.roles?.cache?.has(config.supportRoleId)
+  const supportRoleIds = new Set([
+    config.supportRoleId,
+    ...(config.buttonRoleIds || []).flat(),
+  ].filter(Boolean));
+  return Boolean([...supportRoleIds].some((roleId) => member?.roles?.cache?.has(roleId))
     || member?.permissions?.has(PermissionFlagsBits.ManageGuild));
 }
 
@@ -229,7 +300,10 @@ async function sendTicketTranscript(channel, config, closedBy = null) {
   const transcriptBuffer = clipped ? content.subarray(0, MAX_TRANSCRIPT_BYTES) : content;
   const fileName = `${channel.name}-transcript.txt`.replace(/[^a-zA-Z0-9_.-]/g, '-');
   await logChannel.send({
-    content: `Transcript for <#${channel.id}>${closedBy ? `, closed by ${closedBy}` : ''}.${clipped ? ' Transcript was shortened to fit the upload limit.' : ''}`,
+    embeds: [buildLogEmbed(
+      'Ticket transcript',
+      `Transcript for <#${channel.id}>${closedBy ? `, closed by ${closedBy}` : ''}.${clipped ? ' Transcript was shortened to fit the upload limit.' : ''}`,
+    )],
     files: [new AttachmentBuilder(transcriptBuffer, { name: fileName })],
   });
   return logChannel;
@@ -520,9 +594,8 @@ async function runTicket(interaction) {
   }
 
   if (action === 'create') {
-    const isSupport = interaction.member?.roles?.cache?.has(config.supportRoleId);
-    const isManager = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
-    if (!isSupport && !isManager) {
+    if (!isTicketStaff(interaction.member, config)
+      && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
       await interaction.reply({ content: 'Only support staff can create a ticket for another member.', ephemeral: true });
       return;
     }
@@ -540,10 +613,9 @@ async function runTicket(interaction) {
   if (action === 'close') {
     const channel = interaction.options.getChannel('channel') || interaction.channel;
     const ownerId = channel?.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
-    const isSupport = interaction.member?.roles?.cache?.has(config.supportRoleId);
-    const isManager = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
     if (channel && channel.parentId === config.categoryId && ownerId
-      && (ownerId === interaction.user.id || isSupport || isManager)) {
+      && (ownerId === interaction.user.id || isTicketStaff(interaction.member, config)
+        || interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild))) {
       await interaction.deferReply({ ephemeral: true });
       await closeTicketChannel(channel, config, interaction.user.tag);
       await interaction.editReply({ content: `Closed ticket channel <#${channel.id}>.` });
@@ -575,22 +647,37 @@ async function handleTicketMessage(message) {
     }
     const categoryId = getMentionedId(args[0] || '', 'channel');
     const supportRoleId = getMentionedId(args[1] || '', 'role');
-    const panelChannelId = args[2] ? getMentionedId(args[2], 'channel') : message.channel.id;
     const category = categoryId && message.guild.channels.cache.get(categoryId);
     const role = supportRoleId && message.guild.roles.cache.get(supportRoleId);
-    const panelChannel = panelChannelId && message.guild.channels.cache.get(panelChannelId);
+    let panelChannel = message.channel;
+    let panelArgs = args.slice(2);
+    if (panelArgs[0] && getMentionedId(panelArgs[0], 'channel')) {
+      panelChannel = message.guild.channels.cache.get(getMentionedId(panelArgs[0], 'channel'));
+      panelArgs = panelArgs.slice(1);
+    }
     if (category?.type !== ChannelType.GuildCategory || !role || !panelChannel?.isTextBased?.() || !panelChannel.send) {
       await message.reply('Usage: `,ticket setup #category @support-role [#panel-channel]`');
       return true;
+    }
+    let panelSettings = { buttonLabels: ['Create Ticket'], buttonRoleIds: [[role.id]] };
+    if (panelArgs.length > 0) {
+      const parsedSettings = parseTicketPanelSettings(panelArgs, message.guild);
+      if (parsedSettings.error) {
+        await message.reply(`${parsedSettings.error} Usage: \,ticket setup #category @default-role [#panel] "title" "description" "button" @Role [@Role2 @Role3] ...`);
+        return true;
+      }
+      panelSettings = parsedSettings.settings;
     }
     ticketStore.setConfig(message.guild.id, {
       categoryId: category.id,
       supportRoleId: role.id,
       panelChannelId: panelChannel.id,
+      ...panelSettings,
     });
+    const panelConfig = ticketStore.getConfig(message.guild.id);
     await panelChannel.send({
-      content: '**Need help?** Select the button below to open a private support ticket.',
-      components: [buildTicketOpenRow()],
+      embeds: [buildTicketPanelEmbed(panelConfig.panelTitle, panelConfig.panelDescription)],
+      components: [buildTicketOpenRow(panelConfig.buttonLabels)],
     });
     await message.reply(`Ticket setup saved. Panel posted in <#${panelChannel.id}>; tickets will be created in <#${category.id}>.`);
     return true;
@@ -605,16 +692,30 @@ async function handleTicketMessage(message) {
       await message.reply('Set up tickets first with `,ticket setup #category @support-role [#panel-channel]`.');
       return true;
     }
-    const panelChannelId = args[0] ? getMentionedId(args[0], 'channel') : message.channel.id;
-    const panelChannel = panelChannelId && message.guild.channels.cache.get(panelChannelId);
+    let panelChannel = message.channel;
+    let panelArgs = args;
+    if (args[0] && getMentionedId(args[0], 'channel')) {
+      panelChannel = message.guild.channels.cache.get(getMentionedId(args[0], 'channel'));
+      panelArgs = args.slice(1);
+    }
     if (!panelChannel?.isTextBased?.() || !panelChannel.send) {
-      await message.reply('Usage: `,ticket panel [#channel]`');
+      await message.reply('Usage: `,ticket panel [#channel] "title" "description" "button 1" @Support [@Role2 @Role3] ...`');
       return true;
     }
-    ticketStore.setConfig(message.guild.id, { panelChannelId: panelChannel.id });
+    let panelSettings = {};
+    if (panelArgs.length > 0) {
+      const parsedSettings = parseTicketPanelSettings(panelArgs, message.guild);
+      if (parsedSettings.error) {
+        await message.reply(`${parsedSettings.error} Usage: \,ticket panel [#channel] "title" "description" "button 1" @Support [@Role2 @Role3] ... (up to 5 buttons)`);
+        return true;
+      }
+      panelSettings = parsedSettings.settings;
+    }
+    ticketStore.setConfig(message.guild.id, { panelChannelId: panelChannel.id, ...panelSettings });
+    const panelConfig = ticketStore.getConfig(message.guild.id);
     await panelChannel.send({
-      content: '**Need help?** Select the button below to open a private support ticket.',
-      components: [buildTicketOpenRow()],
+      embeds: [buildTicketPanelEmbed(panelConfig.panelTitle, panelConfig.panelDescription)],
+      components: [buildTicketOpenRow(panelConfig.buttonLabels)],
     });
     await message.reply(`Ticket panel posted in <#${panelChannel.id}>.`);
     return true;
@@ -689,17 +790,20 @@ async function handleTicketMessage(message) {
 }
 
 async function handleTicketButton(interaction) {
-  if (!interaction.isButton?.() || ![TICKET_OPEN_BUTTON_ID, TICKET_CLOSE_BUTTON_ID].includes(interaction.customId)) return false;
+  const isOpenButton = interaction.customId === TICKET_OPEN_BUTTON_ID
+    || interaction.customId?.startsWith(`${TICKET_OPEN_BUTTON_ID}:`);
+  if (!interaction.isButton?.() || (!isOpenButton && interaction.customId !== TICKET_CLOSE_BUTTON_ID)) return false;
+  const buttonIndex = Number.parseInt(interaction.customId.slice(TICKET_OPEN_BUTTON_ID.length + 1), 10) || 0;
   const ticketStore = require('./ticketStore');
   const config = ticketStore.getConfig(interaction.guildId);
 
-  if (interaction.customId === TICKET_OPEN_BUTTON_ID) {
+  if (isOpenButton) {
     if (!config.categoryId || !config.supportRoleId) {
       await interaction.reply({ content: 'Tickets are not configured in this server yet.', ephemeral: true });
       return true;
     }
     await interaction.deferReply({ ephemeral: true });
-    const result = await createTicketChannel(interaction.guild, interaction.user, config);
+    const result = await createTicketChannel(interaction.guild, interaction.user, config, buttonIndex);
     await interaction.editReply({
       content: result.alreadyOpen
         ? `You already have an open ticket: <#${result.channel.id}>`
@@ -1053,4 +1157,8 @@ module.exports.handlePrefixCommand = handlePrefixCommand;
 module.exports.parsePrefixCommand = parsePrefixCommand;
 module.exports.getRepliedUser = getRepliedUser;
 module.exports.buildAfkEmbed = buildAfkEmbed;
+module.exports.buildTicketOpenRow = buildTicketOpenRow;
+module.exports.buildTicketPanelEmbed = buildTicketPanelEmbed;
+module.exports.createTicketChannel = createTicketChannel;
+module.exports.parseTicketPanelSettings = parseTicketPanelSettings;
 module.exports.parseTicketMessage = parseTicketMessage;

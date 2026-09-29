@@ -81,7 +81,10 @@ async function handleMessage(message, store) {
     const duration = formatAfkDuration(authorStatus.since);
     embeds.push({
       color: 0x000000,
-      title: `${message.member?.displayName || author.username}, welcome back`,
+      author: {
+        name: `${message.member?.displayName || author.username}, welcome back`,
+        ...(author.displayAvatarURL ? { icon_url: author.displayAvatarURL({ size: 128 }) } : {}),
+      },
       description: `You were AFK for ${duration}.`,
     });
   }
@@ -95,7 +98,10 @@ async function handleMessage(message, store) {
       const duration = formatAfkDuration(status.since);
       embeds.push({
         color: 0x000000,
-        title: `<@${user.id}> is AFK`,
+        author: {
+          name: `${user.globalName || user.username || 'Member'} is AFK`,
+          ...(user.displayAvatarURL ? { icon_url: user.displayAvatarURL({ size: 128 }) } : {}),
+        },
         description: `Away for ${duration}. Reason: ${status.reason.slice(0, MAX_REASON_LENGTH)}`,
       });
     }

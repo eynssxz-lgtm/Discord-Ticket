@@ -63,7 +63,7 @@ Triggers are case-insensitive and saved per server in `data/guild-autoresponders
 
 ## Tickets
 
-Members with **Manage Server** can run `,ticket setup #category @support-role [#panel-channel]`. `,ticket panel [#channel]` posts or reposts the panel. Members click **Create Ticket** to open a private channel visible to them and the support role. Each member can have one open ticket at a time.
+Members with **Manage Server** can run `,ticket setup #category @default-support [#panel-channel]` to post a default ticket panel embed. To configure the panel and role groups during setup, append `"title" "description" "General help" @Support [@Moderator @Admin] "Billing" @BillingSupport`. Or configure/repost later with `,ticket panel [#channel] "title" "description" "General help" @Support [@Moderator @Admin] "Billing" @BillingSupport`. Add one to five buttons; each button needs one to three support-role mentions. Every button opens the same ticket flow, but only its configured support roles and the ticket owner can see that ticket. Quote titles, descriptions, and button labels that contain spaces. Members can have one open ticket at a time.
 
 Set transcript delivery with `,ticket set transcript-channel #transcript-channel` (the shorter `,ticket logs #transcript-channel` alias also works); transcripts are uploaded there when a ticket is closed with the button, `,ticket close`, or `/ticket close`. Use `,ticket transcript` inside an open ticket to upload its transcript without closing it. The ticket owner or support staff can manage or close a ticket. Staff can also create a ticket with `/ticket create member:@user`.
 
