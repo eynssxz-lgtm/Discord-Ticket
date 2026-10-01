@@ -68,13 +68,13 @@ function buildTicketWelcome(user) {
   };
 }
 
-function ticketChannelName(user) {
+function ticketChannelName(ticketNumber, user) {
   const username = (user.username || 'user')
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 70) || 'user';
-  return `ticket-${username}-${user.id.slice(-4)}`.slice(0, 100);
+  return `ticket-${ticketNumber}-${username}`.slice(0, 100);
 }
 
 function isTicketInteraction(interaction) {
@@ -176,6 +176,7 @@ async function handleCreateTicket(interaction, store) {
   }
 
   await interaction.deferReply({ ephemeral: true });
+  const ticketNumber = store.reserveTicketNumber(interaction.guildId);
   const permissions = [
     { id: interaction.guildId, deny: [PermissionFlagsBits.ViewChannel] },
     {
@@ -210,7 +211,7 @@ async function handleCreateTicket(interaction, store) {
   }
 
   const channel = await interaction.guild.channels.create({
-    name: ticketChannelName(interaction.user),
+    name: ticketChannelName(ticketNumber, interaction.user),
     type: ChannelType.GuildText,
     ...(config.categoryId ? { parent: config.categoryId } : {}),
     permissionOverwrites: permissions,

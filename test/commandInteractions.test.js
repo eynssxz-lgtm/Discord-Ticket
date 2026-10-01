@@ -9,7 +9,7 @@ test('registers slash commands for every former prefix command family', () => {
   assert.deepEqual(commandNames, [
     'edit-embed', 'set-welcome-channel', 'set-welcome-message', 'welcome', 'help', 'set',
     'kick', 'ban', 'timeout', 'mute', 'purge', 'jail', 'unjail', 'avatar', 'cover',
-    'mod', 'role', 'ticket', 'afk', 'autoresponder', 'antinuke', 'antinsfw',
+    'mod', 'role', 'add', 'ticket', 'afk', 'autoresponder', 'antinuke', 'antinsfw',
   ]);
 
   const setCommand = commands.find(({ name }) => name === 'set');
@@ -23,6 +23,11 @@ test('registers slash commands for every former prefix command family', () => {
   assert.equal(roleCommand.default_member_permissions, '268435456');
   assert.deepEqual(roleCommand.options.map(({ name }) => name), ['add']);
   assert.deepEqual(roleCommand.options[0].options.map(({ name }) => name), ['member', 'role']);
+  const bulkRoleCommand = commands.find(({ name }) => name === 'add');
+  assert.deepEqual(bulkRoleCommand.options.map(({ name }) => name), ['role']);
+  assert.deepEqual(bulkRoleCommand.options[0].options.map(({ name }) => name), ['all']);
+  assert.deepEqual(bulkRoleCommand.options[0].options[0].options.map(({ name }) => name), ['role', 'members']);
+  assert.deepEqual(bulkRoleCommand.options[0].options[0].options[1].choices.map(({ value }) => value), ['users', 'bots', 'all']);
   const afkCommand = commands.find(({ name }) => name === 'afk');
   assert.deepEqual(afkCommand.options.map(({ name }) => name), ['reason']);
   const ticketCommand = commands.find(({ name }) => name === 'ticket');

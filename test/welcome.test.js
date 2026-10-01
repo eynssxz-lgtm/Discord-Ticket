@@ -85,10 +85,23 @@ test('formats member and server placeholders and builds mention-safe embed paylo
 });
 
 test('preserves placeholders when validating dynamic image URLs', () => {
+  assert.deepEqual(parseEmbedUpdate('image', '{user.avatar}'), { image: '{user.avatar}' });
+  assert.deepEqual(parseEmbedUpdate('thumbnail', '{server.icon}'), { thumbnail: '{server.icon}' });
   assert.deepEqual(parseEmbedUpdate('image', 'https://example.com/{user.id}.png'), {
     image: 'https://example.com/{user.id}.png',
   });
   assert.equal(parseEmbedUpdate('image', 'javascript:{user.id}'), null);
+});
+
+test('omits image variables that resolve to no URL', () => {
+  const member = {
+    id: 'user-1',
+    user: { id: 'user-1', username: 'Casey' },
+    guild: { id: 'guild-1', name: 'No Icon', memberCount: 1, iconURL: () => null },
+  };
+  const payload = buildPayload({ embed: { title: 'Welcome', image: '{server.icon}' } }, member);
+  assert.equal(payload.embeds[0].data.title, 'Welcome');
+  assert.equal(payload.embeds[0].data.image, undefined);
 });
 
 test('registers welcome commands and provides grouped embed editing sections', () => {

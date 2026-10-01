@@ -4,6 +4,7 @@ const {
   SlashCommandBuilder,
 } = require('discord.js');
 const { ACTION_GROUP_NAMES } = require('./antinuke');
+const { TARGET_TYPES } = require('./bulkRole');
 
 const MODERATION_PERMISSIONS = {
   kick: PermissionFlagsBits.KickMembers,
@@ -148,6 +149,29 @@ function getCommands() {
           .setName('role')
           .setDescription('Role to add')
           .setRequired(true))),
+    new SlashCommandBuilder()
+      .setName('add')
+      .setDescription('Bulk assign a role to server members')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
+      .addSubcommandGroup((group) => group
+        .setName('role')
+        .setDescription('Manage member roles')
+        .addSubcommand((subcommand) => subcommand
+          .setName('all')
+          .setDescription('Assign a role to users, bots, or everyone')
+          .addRoleOption((option) => option
+            .setName('role')
+            .setDescription('Role to assign')
+            .setRequired(true))
+          .addStringOption((option) => option
+            .setName('members')
+            .setDescription('Which members should receive the role')
+            .addChoices(
+              { name: 'Human users only', value: 'users' },
+              { name: 'Bots only', value: 'bots' },
+              { name: 'Everyone', value: 'all' },
+            )
+            .setRequired(true)))),
     new SlashCommandBuilder()
       .setName('ticket')
       .setDescription('Configure and manage private support tickets')
@@ -317,6 +341,7 @@ function buildHelpEmbed() {
           '`/set temp-voice [channel]`',
           '`/set jail-role role`',
           '`/ticket setup [channel] [category] [support-role]`',
+          '`/add role all role members` (confirm before bulk assignment)',
         ].join('\n'),
       },
       {

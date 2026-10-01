@@ -28,6 +28,7 @@ function getConfig(guildId) {
     buttonLabels: ['Create Ticket'],
     buttonRoleIds: null,
     transcriptChannelId: null,
+    nextTicketNumber: 1,
     ...readConfigs()[guildId],
   };
 }
@@ -44,4 +45,15 @@ function setConfig(guildId, config) {
   return configs[guildId];
 }
 
-module.exports = { getConfig, setConfig };
+function reserveTicketNumber(guildId) {
+  const configs = readConfigs();
+  const current = configs[guildId] || getConfig(guildId);
+  const ticketNumber = Number.isInteger(current.nextTicketNumber) && current.nextTicketNumber > 0
+    ? current.nextTicketNumber
+    : 1;
+  configs[guildId] = { ...current, nextTicketNumber: ticketNumber + 1 };
+  writeConfigs(configs);
+  return ticketNumber;
+}
+
+module.exports = { getConfig, setConfig, reserveTicketNumber };

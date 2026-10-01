@@ -171,6 +171,9 @@ function getReadiness(guild, client, punishment, config = {}) {
 async function applyPunishment(member, punishment, reason) {
   if (punishment === 'remove-roles') {
     const removableRoles = [...member.roles.cache.values()].filter((role) => role.editable);
+    if (removableRoles.length === 0) {
+      throw new Error('The bot cannot manage any of this member\'s roles. Move the bot role above the member roles.');
+    }
     await member.roles.remove(removableRoles, reason);
     return true;
   }
@@ -221,17 +224,26 @@ function attach(client, store, logIncident = async () => {}) {
   const lastPunishments = new Map();
 
   const processAction = async (guild, member, actorId, actionGroup, targetId, config, punishmentOverride = null) => {
-    if (hasWhitelistedRole(config, member.roles.cache.keys())) return;
+    if (hasWhitelistedRole(config, member.roles.cache.keys())) {
+      await writeIncidentLog(logIncident, guild, `🛡️ Antinuke skipped **${actionGroup}** by <@${actorId}>: actor has a whitelisted role.`);
+      return;
+    }
 
     const now = Date.now();
     const rateKey = `${guild.id}:${actorId}:${actionGroup}`;
     const actions = (recentActions.get(rateKey) || []).filter((timestamp) => now - timestamp < WINDOW_MS);
     actions.push(now);
     recentActions.set(rateKey, actions);
-    if (actions.length < THRESHOLD) return;
+    if (actions.length < THRESHOLD) {
+      await writeIncidentLog(logIncident, guild, `🛡️ Antinuke observed **${actionGroup}** by <@${actorId}> (${actions.length}/${THRESHOLD} actions).`);
+      return;
+    }
 
     const punishmentKey = `${guild.id}:${actorId}`;
-    if (now - (lastPunishments.get(punishmentKey) || 0) < WINDOW_MS) return;
+    if (now - (lastPunishments.get(punishmentKey) || 0) < WINDOW_MS) {
+      await writeIncidentLog(logIncident, guild, `🛡️ Antinuke observed **${actionGroup}** by <@${actorId}> but rate-limited a repeated punishment inside ${WINDOW_MS}ms.`);
+      return;
+    }
 
     const entry = { executorId: actorId, targetId };
     const reason = `SINCLAIR antinuke: ${actionGroup} threshold exceeded`;
@@ -240,7 +252,9 @@ function attach(client, store, logIncident = async () => {}) {
       || config.actionPunishments?.[actionGroup]
       || config.punishment;
     const notifyBeforePunishment = punishment === 'kick' || punishment === 'ban';
-    if (notifyBeforePunishment) await sendPunishmentNotice(member, guild, actionGroup, punishment);
+    const noticePromise = notifyBeforePunishment
+      ? sendPunishmentNotice(member, guild, actionGroup, punishment)
+      : null;
     let punished;
     try {
       punished = await applyPunishment(member, punishment, reason);
@@ -248,6 +262,7 @@ function attach(client, store, logIncident = async () => {}) {
       await writeIncidentLog(logIncident, guild, formatIncident(entry, actionGroup, punishment, 'failed'));
       throw error;
     }
+    if (noticePromise) await noticePromise;
     if (punished && !notifyBeforePunishment) {
       await sendPunishmentNotice(member, guild, actionGroup, punishment);
     }
@@ -275,12 +290,17 @@ function attach(client, store, logIncident = async () => {}) {
 
   client.on('guildAuditLogEntryCreate', async (entry, guild) => {
     const actionGroup = isMonitoredEntry(entry, guild);
-    if (!actionGroup || !entry.executorId || entry.executorId === client.user?.id) {
-      return;
-    }
+    if (!actionGroup) return;
 
     const config = store.getConfig(guild.id);
-    if (!config.enabled || entry.executorId === guild.ownerId) {
+    if (!config.enabled) return;
+    if (!entry.executorId) {
+      await writeIncidentLog(logIncident, guild, `🛡️ Antinuke received **${actionGroup}**, but Discord did not attribute an executor. No punishment was possible.`);
+      return;
+    }
+    if (entry.executorId === client.user?.id) return;
+    if (entry.executorId === guild.ownerId) {
+      await writeIncidentLog(logIncident, guild, `🛡️ Antinuke skipped **${actionGroup}**: the executor is the server owner.`);
       return;
     }
 
@@ -295,6 +315,7 @@ function attach(client, store, logIncident = async () => {}) {
 
     if (actionGroup === 'channel-delete'
       && isWhitelistedTarget(config, entry.targetId, parentId, isCategory)) {
+      await writeIncidentLog(logIncident, guild, `🛡️ Antinuke skipped deletion of <#${entry.targetId}> because that channel or category is whitelisted.`);
       return;
     }
 
@@ -303,6 +324,7 @@ function attach(client, store, logIncident = async () => {}) {
       await processAction(guild, member, entry.executorId, actionGroup, entry.targetId, config);
     } catch (error) {
       console.error(`Antinuke could not process executor ${entry.executorId} in guild ${guild.id}:`, error.message);
+      await writeIncidentLog(logIncident, guild, `🛡️ Antinuke detected **${actionGroup}** by <@${entry.executorId}> but could not punish them: ${error.message}`);
     }
   });
 

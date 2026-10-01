@@ -49,6 +49,9 @@ function parseEmbedUpdate(field, value) {
 
   if (URL_FIELDS.has(field)) {
     if (!value) return null;
+    if (/^\{(?:user\.avatar|server\.icon)\}$/.test(value)) {
+      return { [field]: value };
+    }
     try {
       const validationValue = value.replace(/\{[A-Za-z][A-Za-z0-9.]*\}/g, 'variable');
       const url = new URL(validationValue);
@@ -142,12 +145,18 @@ function buildPayload(config, member, channel = null) {
     hasEmbedContent = true;
   }
   if (embedConfig.image) {
-    embed.setImage(formatTemplate(embedConfig.image, member, channel));
-    hasEmbedContent = true;
+    const image = formatTemplate(embedConfig.image, member, channel);
+    if (image) {
+      embed.setImage(image);
+      hasEmbedContent = true;
+    }
   }
   if (embedConfig.thumbnail) {
-    embed.setThumbnail(formatTemplate(embedConfig.thumbnail, member, channel));
-    hasEmbedContent = true;
+    const thumbnail = formatTemplate(embedConfig.thumbnail, member, channel);
+    if (thumbnail) {
+      embed.setThumbnail(thumbnail);
+      hasEmbedContent = true;
+    }
   }
 
   const content = config.message ? formatMessage(config.message, member, channel) : null;

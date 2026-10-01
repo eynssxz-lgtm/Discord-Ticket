@@ -193,6 +193,95 @@ test('punishes and logs after one matching audit action', async () => {
   assert.match(logs[0][1], /applied kick/);
 });
 
+test('handles a channel deletion audit event and logs the punishment', async () => {
+  let auditLogHandler;
+  const logs = [];
+  const member = {
+    id: 'moderator-id',
+    roles: { cache: new Map() },
+    send: async () => {},
+    kick: async () => {},
+  };
+  const guild = {
+    id: 'guild-id',
+    name: 'Example server',
+    ownerId: 'owner-id',
+    channels: { cache: new Map() },
+    members: { fetch: async () => member },
+  };
+  const client = {
+    user: { id: 'bot-id' },
+    on: (event, handler) => {
+      if (event === 'guildAuditLogEntryCreate') auditLogHandler = handler;
+    },
+  };
+  const store = {
+    getConfig: () => ({
+      enabled: true,
+      punishment: 'kick',
+      roleIds: [],
+      categoryIds: [],
+      channelIds: [],
+    }),
+  };
+  attach(client, store, async (_targetGuild, message) => logs.push(message));
+
+  await auditLogHandler({
+    action: AuditLogEvent.ChannelDelete,
+    executorId: member.id,
+    targetId: 'deleted-channel',
+  }, guild);
+
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /channel-delete/);
+  assert.match(logs[0], /applied kick/);
+});
+
+test('starts kick enforcement without waiting for the DM request', async () => {
+  let auditLogHandler;
+  let releaseDm;
+  let kicked = false;
+  const member = {
+    id: 'moderator-id',
+    roles: { cache: new Map() },
+    send: () => new Promise((resolve) => { releaseDm = resolve; }),
+    kick: async () => { kicked = true; },
+  };
+  const client = {
+    user: { id: 'bot-id' },
+    on: (event, handler) => {
+      if (event === 'guildAuditLogEntryCreate') auditLogHandler = handler;
+    },
+  };
+  const guild = {
+    id: 'guild-id',
+    name: 'Example server',
+    ownerId: 'owner-id',
+    channels: { cache: new Map() },
+    members: { fetch: async () => member },
+  };
+  const store = {
+    getConfig: () => ({
+      enabled: true,
+      punishment: 'kick',
+      roleIds: [],
+      categoryIds: [],
+      channelIds: [],
+    }),
+  };
+  attach(client, store);
+
+  const pending = auditLogHandler({
+    action: AuditLogEvent.RoleDelete,
+    executorId: member.id,
+    targetId: 'role-id',
+  }, guild);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(kicked, true);
+  releaseDm();
+  await pending;
+});
+
 test('logs a single posted invite link through antinuke', async () => {
   let messageHandler;
   const logs = [];
@@ -323,6 +412,18 @@ test('supports every configured antinuke punishment', async () => {
   assert.deepEqual(calls.map(([type]) => type), ['remove-roles', 'timeout', 'kick', 'ban']);
   assert.deepEqual(calls[0][1].map(({ id }) => id), ['role-a']);
   assert.equal(calls[0][2], 'test');
+});
+
+test('fails visibly when no member roles are manageable by the bot', async () => {
+  await assert.rejects(
+    applyPunishment({
+      roles: {
+        cache: new Map([['high-role', { id: 'high-role', editable: false }]]),
+        remove: async () => assert.fail('must not issue an empty removal'),
+      },
+    }, 'remove-roles', 'test'),
+    /cannot manage any of this member's roles/,
+  );
 });
 
 test('DMs the member when antinuke removes their roles', async () => {

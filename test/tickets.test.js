@@ -20,6 +20,7 @@ function createStore(initial = {}) {
     panelDescription: 'Open a ticket.',
     buttonLabels: ['Create Ticket'],
     openTickets: {},
+    nextTicketNumber: 1,
     ...initial,
   };
   return {
@@ -29,6 +30,11 @@ function createStore(initial = {}) {
       Object.assign(config, update);
       if (Object.hasOwn(update, 'openTickets')) config.openTickets = { ...update.openTickets };
       return config;
+    },
+    reserveTicketNumber: () => {
+      const ticketNumber = config.nextTicketNumber;
+      config.nextTicketNumber += 1;
+      return ticketNumber;
     },
   };
 }
@@ -47,8 +53,9 @@ function createGuild({ panelChannel, ticketChannel } = {}) {
         fetch: async (id) => channels.get(id) || null,
         create: async (options) => {
           created.push(options);
+          const number = created.filter((item) => item?.type === ChannelType.GuildText).length;
           const channel = {
-            id: 'ticket-channel',
+            id: `ticket-channel-${number}`,
             name: options.name,
             send: async (payload) => created.push(payload),
             delete: async (reason) => created.push(['deleted', reason]),
@@ -132,6 +139,7 @@ test('create button opens a private ticket and stores the user-channel associati
 
   const createOptions = created[0];
   assert.equal(createOptions.type, ChannelType.GuildText);
+  assert.equal(createOptions.name, 'ticket-1-casey');
   assert.equal(createOptions.parent, 'ticket-category');
   assert.ok(createOptions.permissionOverwrites.some(({ id, deny }) => (
     id === guild.id && deny.includes(PermissionFlagsBits.ViewChannel)
@@ -140,10 +148,30 @@ test('create button opens a private ticket and stores the user-channel associati
     id === interaction.user.id && allow.includes(PermissionFlagsBits.SendMessages)
   )));
   assert.ok(createOptions.permissionOverwrites.some(({ id }) => id === 'support-role'));
-  assert.equal(store.config.openTickets[interaction.user.id], 'ticket-channel');
+  assert.equal(store.config.openTickets[interaction.user.id], 'ticket-channel-1');
   assert.equal(created[1].embeds[0].data.title, 'Ticket Opened');
   assert.equal(created[1].components[0].components[0].data.custom_id, CLOSE_BUTTON_ID);
   assert.match(interaction.replies.at(-1)[1].content, /private ticket is ready/);
+});
+
+test('numbers created ticket channels sequentially from one', async () => {
+  const { guild, created } = createGuild();
+  const store = createStore();
+
+  for (const [index, id] of ['user-0001', 'user-0002', 'user-0003'].entries()) {
+    const interaction = createInteraction(guild, {
+      user: { id, username: `Member${index + 1}`, tag: `Member${index + 1}#0001` },
+    });
+    interaction.customId = `${CREATE_BUTTON_ID}:0`;
+    await handleInteraction(interaction, store);
+  }
+
+  const ticketChannels = created.filter((item) => item?.type === ChannelType.GuildText);
+  assert.deepEqual(ticketChannels.map(({ name }) => name), [
+    'ticket-1-member1',
+    'ticket-2-member2',
+    'ticket-3-member3',
+  ]);
 });
 
 test('prevents a user from creating a second active ticket', async () => {
@@ -173,5 +201,6 @@ test('allows the ticket owner or support staff to close the ticket', async () =>
 });
 
 test('creates a stable safe ticket channel name', () => {
-  assert.equal(ticketChannelName({ username: 'Casey User', id: 'user-1234' }), 'ticket-casey-user-1234');
+  assert.equal(ticketChannelName(1, { username: 'Casey User', id: 'user-1234' }), 'ticket-1-casey-user');
+  assert.equal(ticketChannelName(23, { username: 'Casey User', id: 'user-1234' }), 'ticket-23-casey-user');
 });

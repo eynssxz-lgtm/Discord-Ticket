@@ -27,6 +27,7 @@ const ticketStore = require('./ticketStore');
 const roleAssignment = require('./roleAssignment');
 const nsfwLinkGuard = require('./nsfwLinkGuard');
 const nsfwLinkStore = require('./nsfwLinkStore');
+const bulkRole = require('./bulkRole');
 
 const token = process.env.DISCORD_TOKEN;
 const applicationId = process.env.DISCORD_CLIENT_ID;
@@ -136,6 +137,18 @@ client.on('messageDelete', async (message) => {
 
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.inGuild()) return;
+
+  if (bulkRole.isBulkRoleComponent(interaction)) {
+    try {
+      await bulkRole.handleBulkRoleComponent(interaction);
+    } catch (error) {
+      console.error(`Could not complete bulk role assignment in guild ${interaction.guildId}:`, error.message);
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({ content: 'Bulk role assignment failed. Check permissions and try again.', ephemeral: true });
+      }
+    }
+    return;
+  }
 
   if (tickets.isTicketInteraction(interaction)) {
     try {

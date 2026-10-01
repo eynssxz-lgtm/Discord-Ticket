@@ -14,6 +14,7 @@ const { jailMember, unjailMember } = require('./jail');
 const { parseDuration, buildUserCardEmbed } = require('./moderation');
 const { buildHelpEmbed, MODERATION_PERMISSIONS } = require('./commandInteractions');
 const roleAssignment = require('./roleAssignment');
+const bulkRole = require('./bulkRole');
 const nsfwLinkStore = require('./nsfwLinkStore');
 
 async function requirePermission(interaction, permission, message) {
@@ -371,12 +372,20 @@ async function runAntinuke(interaction) {
   const status = `Antinuke is ${config.enabled ? 'enabled' : 'disabled'}. Threshold: ${THRESHOLD} matching ${actionWord} within ${WINDOW_MS / 1000} ${secondWord}; punishment: ${punishment}.`;
   const overrideCount = Object.keys(config.actionPunishments || {}).length;
   const raidStatus = `Join-raid protection: ${config.raid.enabled ? 'enabled' : 'disabled'} (${config.raid.threshold} joins in ${config.raid.windowSeconds}s; ${config.raid.punishment}).`;
+  const securityLogChannelId = logChannelStore.getLogChannel(interaction.guildId, 'security');
+  const securityLogChannel = securityLogChannelId
+    ? interaction.guild.channels.cache.get(securityLogChannelId)
+    : null;
+  const securityLogStatus = securityLogChannel
+    ? `Security diagnostics log: <#${securityLogChannel.id}>.`
+    : 'Security diagnostics log: not configured; set one with `/set logs channel:#channel type:security`.';
   const readiness = antinuke.getReadiness(interaction.guild, interaction.client, config.punishment, config);
   const checks = [
     `GuildModeration intent: ${readiness.moderationIntent ? 'ready' : 'MISSING'}`,
     `View Audit Log: ${readiness.viewAuditLog ? 'ready' : 'MISSING'}`,
     `Punishment permission${readiness.punishmentPermissionName ? ` (${readiness.punishmentPermissionName})` : ''}: ${readiness.punishmentPermission ? 'ready' : 'MISSING'}`,
     `Missing permissions for configured responses: ${readiness.missingPunishmentPermissions.length ? readiness.missingPunishmentPermissions.join(', ') : 'none'}`,
+    securityLogStatus,
     'The bot role must be above the actor and any roles it needs to remove.',
     'The server owner and whitelisted actors/targets are exempt.',
   ].join('\n');
@@ -398,6 +407,13 @@ async function handleCommand(interaction) {
   }
   if (name === 'role') {
     await runRole(interaction);
+    return true;
+  }
+  if (name === 'add') {
+    if (interaction.options.getSubcommandGroup(false) === 'role'
+      && interaction.options.getSubcommand() === 'all') {
+      await bulkRole.setupBulkRoleCommand(interaction);
+    }
     return true;
   }
   if (name === 'afk') {
