@@ -40,8 +40,21 @@ test('validates channel IDs and embed fields', () => {
 test('formats member and server placeholders and builds mention-safe embed payloads', () => {
   const member = {
     id: '42',
-    user: { username: 'Casey' },
-    guild: { name: 'Example Server', memberCount: 12 },
+    displayName: 'Casey Display',
+    joinedTimestamp: 2_000,
+    user: {
+      id: '42',
+      username: 'Casey',
+      globalName: 'Casey Global',
+      createdTimestamp: 1_000,
+      displayAvatarURL: () => 'https://cdn.example/users/42.png',
+    },
+    guild: {
+      id: 'guild-7',
+      name: 'Example Server',
+      memberCount: 12,
+      iconURL: () => 'https://cdn.example/guilds/7.png',
+    },
   };
   assert.equal(
     formatMessage('Welcome {user} ({username}) to {server}: {memberCount}', member),
@@ -50,12 +63,32 @@ test('formats member and server placeholders and builds mention-safe embed paylo
 
   const payload = buildPayload({
     message: 'Welcome {user}!',
-    embed: { title: 'Welcome!', description: 'Glad you joined.', color: '#36a2eb' },
-  }, member);
+    embed: {
+      title: 'Welcome {user.name} ({user.id})',
+      description: 'Hello {user.mention} ({user.displayName}) in {channel.name} on {server.name} ({server.id}); {server.memberCount} members.',
+      author: '{username}',
+      footer: 'Joined {user.joinedAt}; account created {user.createdAt}.',
+      color: '#36a2eb',
+      image: 'https://cdn.example/welcome/{user.id}.png',
+      thumbnail: '{user.avatar}',
+    },
+  }, member, { id: 'channel-8', name: 'welcome' });
   assert.equal(payload.content, 'Welcome <@42>!');
   assert.equal(payload.embeds.length, 1);
-  assert.equal(payload.embeds[0].data.title, 'Welcome!');
+  assert.equal(payload.embeds[0].data.title, 'Welcome Casey Global (42)');
+  assert.equal(payload.embeds[0].data.description, 'Hello <@42> (Casey Display) in welcome on Example Server (guild-7); 12 members.');
+  assert.equal(payload.embeds[0].data.author.name, 'Casey');
+  assert.equal(payload.embeds[0].data.footer.text, 'Joined <t:2:F>; account created <t:1:F>.');
+  assert.equal(payload.embeds[0].data.image.url, 'https://cdn.example/welcome/42.png');
+  assert.equal(payload.embeds[0].data.thumbnail.url, 'https://cdn.example/users/42.png');
   assert.deepEqual(payload.allowedMentions, { users: ['42'], roles: [], parse: [] });
+});
+
+test('preserves placeholders when validating dynamic image URLs', () => {
+  assert.deepEqual(parseEmbedUpdate('image', 'https://example.com/{user.id}.png'), {
+    image: 'https://example.com/{user.id}.png',
+  });
+  assert.equal(parseEmbedUpdate('image', 'javascript:{user.id}'), null);
 });
 
 test('registers welcome commands and provides grouped embed editing sections', () => {

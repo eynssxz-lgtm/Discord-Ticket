@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { AuditLogEvent, PermissionsBitField } = require('discord.js');
+const antinukeStore = require('../src/antinukeStore');
 const {
   parseSnowflake,
   getActionGroup,
@@ -32,10 +33,15 @@ test('groups destructive audit actions for threshold counting', () => {
   assert.equal(getActionGroup(AuditLogEvent.MemberBanAdd), 'member-removal');
   assert.equal(getActionGroup(AuditLogEvent.MemberKick), 'member-removal');
   assert.equal(getActionGroup(AuditLogEvent.ChannelDelete), 'channel-delete');
+  assert.equal(getActionGroup(AuditLogEvent.ChannelCreate), 'channel-create');
   assert.equal(getActionGroup(AuditLogEvent.RoleDelete), 'role-delete');
   assert.equal(getActionGroup(AuditLogEvent.RoleCreate), 'role-create');
   assert.equal(getActionGroup(AuditLogEvent.MemberPrune), 'member-prune');
   assert.equal(getActionGroup(AuditLogEvent.InviteCreate), 'invite-create');
+  assert.equal(getActionGroup(AuditLogEvent.InviteDelete), 'invite-change');
+  assert.equal(getActionGroup(AuditLogEvent.WebhookUpdate), 'webhook-change');
+  assert.equal(getActionGroup(AuditLogEvent.IntegrationCreate), 'integration-change');
+  assert.equal(getActionGroup(AuditLogEvent.AutoModerationRuleDelete), 'automod-rule-change');
   assert.equal(getActionGroup(AuditLogEvent.ChannelOverwriteUpdate), 'dangerous-permission-grant');
   assert.equal(getActionGroup(AuditLogEvent.MemberRoleUpdate), 'dangerous-role-assignment');
   assert.equal(getActionGroup(AuditLogEvent.MessageDelete), null);
@@ -116,13 +122,25 @@ test('reports missing gateway intent and permissions for antinuke setup', () => 
     viewAuditLog: true,
     punishmentPermission: false,
     punishmentPermissionName: 'Manage Roles',
+    missingPunishmentPermissions: ['Manage Roles'],
   });
 });
 
-test('uses one matching action within ten seconds and a ten-minute timeout', () => {
+test('uses an immediate action threshold and ten-minute timeout', () => {
   assert.equal(THRESHOLD, 1);
-  assert.equal(WINDOW_MS, 10_000);
+  assert.equal(WINDOW_MS, 1_000);
   assert.equal(TIMEOUT_MS, 600_000);
+});
+
+test('uses action-specific punishment before the global fallback', () => {
+  assert.equal(antinukeStore.getActionPunishment({
+    punishment: 'remove-roles',
+    actionPunishments: { 'channel-delete': 'ban' },
+  }, 'channel-delete'), 'ban');
+  assert.equal(antinukeStore.getActionPunishment({
+    punishment: 'remove-roles',
+    actionPunishments: {},
+  }, 'channel-delete'), 'remove-roles');
 });
 
 test('punishes and logs after one matching audit action', async () => {
@@ -170,7 +188,7 @@ test('punishes and logs after one matching audit action', async () => {
   assert.equal(logs.length, 1);
   assert.equal(logs[0][0], 'guild-id');
   assert.match(logs[0][1], /role-delete/);
-  assert.match(logs[0][1], /1 matching action within 10 seconds/);
+  assert.match(logs[0][1], /1 matching action within 1 second/);
   assert.match(logs[0][1], /moderator-id/);
   assert.match(logs[0][1], /applied kick/);
 });
@@ -216,13 +234,52 @@ test('logs a single posted invite link through antinuke', async () => {
   assert.match(logs[0][1], /member-id/);
 });
 
+test('only applies join-raid punishment after configured burst threshold', async () => {
+  let memberAddHandler;
+  const logs = [];
+  const punished = [];
+  const client = {
+    user: { id: 'bot-id' },
+    on: (event, handler) => {
+      if (event === 'guildMemberAdd') memberAddHandler = handler;
+    },
+  };
+  const guild = { id: 'guild-id', name: 'Example server', ownerId: 'owner-id' };
+  const store = {
+    getConfig: () => ({
+      enabled: true,
+      punishment: 'remove-roles',
+      actionPunishments: {},
+      roleIds: [],
+      raid: { enabled: true, threshold: 3, windowSeconds: 10, punishment: 'kick' },
+    }),
+  };
+  attach(client, store, async (targetGuild, message) => logs.push(message));
+  const makeMember = (id) => ({
+    id,
+    guild,
+    roles: { cache: new Map() },
+    send: async () => {},
+    kick: async () => punished.push(id),
+  });
+
+  await memberAddHandler(makeMember('join-1'));
+  await memberAddHandler(makeMember('join-2'));
+  assert.equal(punished.length, 0);
+  await memberAddHandler(makeMember('join-3'));
+
+  assert.deepEqual(punished, ['join-3']);
+  assert.match(logs[0], /raid-join-burst/);
+  assert.match(logs[0], /applied kick/);
+});
+
 test('DMs kick and ban details before punishment and continues if DMs are closed', async () => {
   const calls = [];
   const guild = { name: 'Example server' };
   const member = {
     id: 'member-id',
-    send: async ({ content }) => {
-      calls.push(['dm', content]);
+    send: async (payload) => {
+      calls.push(['dm', payload]);
       throw new Error('DMs closed');
     },
     kick: async () => calls.push(['kick']),
@@ -235,10 +292,11 @@ test('DMs kick and ban details before punishment and continues if DMs are closed
   await applyPunishment(member, 'ban', 'reason');
 
   assert.deepEqual(calls.map(([action]) => action), ['dm', 'kick', 'dm', 'ban']);
-  assert.match(calls[0][1], /invite-link/);
-  assert.match(calls[0][1], /kicked/);
-  assert.match(calls[2][1], /channel-delete/);
-  assert.match(calls[2][1], /banned/);
+  assert.match(calls[0][1].embeds[0].data.title, /User Punished/);
+  assert.match(calls[0][1].embeds[0].data.fields.find(({ name }) => name === 'Action').value, /invite link/);
+  assert.match(calls[0][1].embeds[0].data.fields.find(({ name }) => name === 'Punishment Type').value, /kick/);
+  assert.match(calls[2][1].embeds[0].data.fields.find(({ name }) => name === 'Action').value, /channel delete/);
+  assert.match(calls[2][1].embeds[0].data.fields.find(({ name }) => name === 'Punishment Type').value, /ban/);
 });
 
 test('supports every configured antinuke punishment', async () => {
@@ -271,10 +329,18 @@ test('DMs the member when antinuke removes their roles', async () => {
   let notice;
   await sendPunishmentNotice({
     id: 'member-id',
-    send: async ({ content }) => { notice = content; },
+    user: { tag: 'member#0001' },
+    send: async (payload) => { notice = payload; },
   }, { name: 'Example server' }, 'channel-delete', 'remove-roles');
 
-  assert.match(notice, /stripped of all manageable roles/);
-  assert.match(notice, /channel-delete/);
-  assert.match(notice, /Action taken: \*\*remove-roles\*\*/);
+  const embed = notice.embeds[0].data;
+  assert.equal(embed.title, 'User Punished');
+  assert.match(embed.description, /Security responded in 1 second! AYOKO SAYO WANNA BE NUKER KA BOBO/);
+  assert.match(embed.description, /Anti Nuke has punished a user, details:/);
+  assert.deepEqual(embed.fields.map(({ name }) => name), ['Server', 'User', 'Action', 'Punishment Type']);
+  assert.equal(embed.fields[0].value, 'Example server');
+  assert.equal(embed.fields[1].value, 'member#0001 (<@member-id>)');
+  assert.equal(embed.fields[2].value, 'channel delete');
+  assert.equal(embed.fields[3].value, 'remove-roles');
+  assert.deepEqual(notice.allowedMentions, { parse: [] });
 });

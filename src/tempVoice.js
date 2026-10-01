@@ -1,5 +1,6 @@
 const { ChannelType } = require('discord.js');
 const tempVoiceStore = require('./tempVoiceStore');
+const tempVoiceControls = require('./tempVoiceControls');
 
 function parseChannelId(value) {
   const match = value.match(/^(?:<#(\d+)>|(\d+))$/);
@@ -26,7 +27,7 @@ async function handleVoiceStateUpdate(oldState, newState, store = tempVoiceStore
     type: ChannelType.GuildVoice,
     ...(triggerChannel.parentId ? { parent: triggerChannel.parentId } : {}),
   });
-  store.addTemporaryChannel(guild.id, channel.id);
+  store.addTemporaryChannel(guild.id, channel.id, member.id);
 
   try {
     await member.voice.setChannel(channel);
@@ -34,6 +35,12 @@ async function handleVoiceStateUpdate(oldState, newState, store = tempVoiceStore
     await channel.delete('Could not move member into temporary voice channel').catch(() => null);
     store.removeTemporaryChannel(guild.id, channel.id);
     throw error;
+  }
+
+  try {
+    await tempVoiceControls.postControlPanel(channel, member.id, store);
+  } catch (error) {
+    console.error(`Could not post controls in temporary voice channel ${channel.id}:`, error.message);
   }
 }
 

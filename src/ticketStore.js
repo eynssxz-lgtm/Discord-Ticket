@@ -38,6 +38,7 @@ function setConfig(guildId, config) {
   configs[guildId] = {
     ...previous,
     ...config,
+    ...(Object.hasOwn(config, 'openTickets') ? { openTickets: config.openTickets } : {}),
   };
   writeConfigs(configs);
   return configs[guildId];

@@ -1,318 +1,20 @@
-const {
-  ActionRowBuilder,
-  AttachmentBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  ChannelType,
-  PermissionFlagsBits,
-  PermissionsBitField,
-} = require('discord.js');
+const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const autoresponder = require('./autoresponder');
 const autoresponderStore = require('./autoresponderStore');
 const antinukeStore = require('./antinukeStore');
-const antinuke = require('./antinuke');
-const { THRESHOLD, WINDOW_MS } = antinuke;
+const antinukeInteractions = require('./antinukeInteractions');
+const { THRESHOLD, WINDOW_MS } = require('./antinuke');
 const jailStore = require('./jailStore');
 const logChannelStore = require('./logChannelStore');
 const tempVoiceStore = require('./tempVoiceStore');
 const afkStore = require('./afkStore');
-const welcome = require('./welcome');
-const welcomeStore = require('./welcomeStore');
-const welcomeInteractions = require('./welcomeInteractions');
-const { wrapCommandReplyMethods } = require('./commandReplies');
+const tickets = require('./tickets');
+const ticketStore = require('./ticketStore');
 const { jailMember, unjailMember } = require('./jail');
 const { parseDuration, buildUserCardEmbed } = require('./moderation');
 const { buildHelpEmbed, MODERATION_PERMISSIONS } = require('./commandInteractions');
-const { buildLogEmbed } = require('./messageLogs');
-
-const TICKET_OPEN_BUTTON_ID = 'ticket:open';
-const TICKET_CLOSE_BUTTON_ID = 'ticket:close';
-const MAX_TRANSCRIPT_MESSAGES = 5_000;
-const MAX_TRANSCRIPT_BYTES = 7 * 1024 * 1024;
-
-function buildAfkEmbed(user, reason) {
-  const displayName = user.globalName || user.username || 'Member';
-  const avatarUrl = user.displayAvatarURL?.({ size: 128 }) || user.avatarURL?.({ size: 128 });
-  return {
-    color: 0x000000,
-    author: {
-      name: `${displayName} is AFK`,
-      ...(avatarUrl ? { icon_url: avatarUrl } : {}),
-    },
-    description: reason,
-    footer: { text: 'Your AFK status clears when you send a message.' },
-  };
-}
-
-function buildTicketOpenRow(labels = ['Create Ticket']) {
-  if (!Array.isArray(labels) || labels.length < 1 || labels.length > 5) {
-    throw new RangeError('Ticket panels must have between one and five buttons.');
-  }
-  return new ActionRowBuilder().addComponents(...labels.map((label, index) => (
-    new ButtonBuilder()
-      .setCustomId(`${TICKET_OPEN_BUTTON_ID}:${index}`)
-      .setLabel(label)
-      .setStyle(ButtonStyle.Primary)
-  )));
-}
-
-function buildTicketPanelEmbed(title = 'Support Tickets', description = 'Select a button below to create a private support ticket.') {
-  return {
-    color: 0x000000,
-    title,
-    description,
-  };
-}
-
-function parseTicketPanelSettings(args, guild) {
-  const [panelTitle, panelDescription, ...buttonDefinitions] = args;
-  if (!panelTitle || panelTitle.length > 256 || !panelDescription || panelDescription.length > 4096) {
-    return { error: 'Provide a panel title and description before the button definitions.' };
-  }
-
-  const buttonLabels = [];
-  const buttonRoleIds = [];
-  let position = 0;
-  while (position < buttonDefinitions.length) {
-    const label = buttonDefinitions[position++];
-    if (!label.trim() || label.length > 80) {
-      return { error: 'Button labels must contain 1 to 80 characters.' };
-    }
-
-    const roleIds = [];
-    while (position < buttonDefinitions.length) {
-      const roleId = getMentionedId(buttonDefinitions[position], 'role');
-      if (!roleId) break;
-      if (!guild.roles.cache.has(roleId)) return { error: `Support role ${buttonDefinitions[position]} was not found.` };
-      roleIds.push(roleId);
-      position += 1;
-    }
-    if (roleIds.length === 0 || roleIds.length > 3) {
-      return { error: `Button "${label}" needs one to three support-role mentions.` };
-    }
-
-    buttonLabels.push(label);
-    buttonRoleIds.push(roleIds);
-    if (buttonLabels.length > 5) return { error: 'A ticket panel can have at most five buttons.' };
-  }
-  if (buttonLabels.length === 0) return { error: 'Add at least one labeled button and its support role.' };
-
-  return {
-    settings: {
-      panelTitle,
-      panelDescription,
-      buttonLabels,
-      buttonRoleIds,
-    },
-  };
-}
-
-function buildTicketCloseRow() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(TICKET_CLOSE_BUTTON_ID)
-      .setLabel('Close Ticket')
-      .setStyle(ButtonStyle.Danger),
-  );
-}
-
-function getTicketMetadata(channel) {
-  const match = channel?.topic?.match(/^ticket-owner:(\d+)(?::button:(\d+))?$/);
-  if (!match) return null;
-  return { ownerId: match[1], buttonIndex: Number.parseInt(match[2] || '0', 10) };
-}
-
-async function createTicketChannel(guild, user, config, buttonIndex = 0) {
-  const existing = guild.channels.cache.find((channel) => (
-    channel.parentId === config.categoryId && getTicketMetadata(channel)?.ownerId === user.id
-  ));
-  if (existing) return { channel: existing, alreadyOpen: true };
-
-  const username = user.username.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  const supportRoleIds = config.buttonRoleIds?.[buttonIndex] || [config.supportRoleId];
-  const channel = await guild.channels.create({
-    name: `ticket-${username || user.id}`.slice(0, 100),
-    type: ChannelType.GuildText,
-    parent: config.categoryId,
-    topic: `ticket-owner:${user.id}:button:${buttonIndex}`,
-    permissionOverwrites: [
-      {
-        id: guild.id,
-        deny: [PermissionsBitField.Flags.ViewChannel],
-      },
-      {
-        id: user.id,
-        allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
-      },
-      ...supportRoleIds.map((roleId) => ({
-        id: roleId,
-        allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
-      })),
-      {
-        id: guild.client.user.id,
-        allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory],
-      },
-    ],
-  });
-  await channel.send({
-    content: `Welcome <@${user.id}>. Support staff will be with you shortly.`,
-    components: [buildTicketCloseRow()],
-  });
-  return { channel, alreadyOpen: false };
-}
-
-function parseTicketMessage(content) {
-  const match = /^,ticket(?:\s+([\s\S]*))?$/i.exec(content.trim());
-  if (!match) return null;
-  const [action, ...args] = tokenizePrefixArgs((match[1] || '').trim());
-  return { action: action?.toLowerCase() || 'help', args };
-}
-
-function getMentionedId(value, type) {
-  const patterns = {
-    channel: /^(?:<#(\d+)>|(\d+))$/,
-    role: /^(?:<@&(\d+)>|(\d+))$/,
-  };
-  const match = patterns[type]?.exec(value);
-  return match?.[1] || match?.[2] || null;
-}
-
-function tokenizePrefixArgs(value) {
-  const args = [];
-  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
-  let match;
-  while ((match = pattern.exec(value)) !== null) args.push(match[1] ?? match[2] ?? match[3]);
-  return args;
-}
-
-function parsePrefixCommand(content) {
-  const match = /^,([a-z][\w-]*)(?:\s+([\s\S]*))?$/i.exec(content.trim());
-  if (!match) return null;
-  const rawArgs = (match[2] || '').trim();
-  const commandName = match[1].toLowerCase();
-  return {
-    name: commandName === 'av' ? 'avatar' : commandName,
-    rawArgs,
-    args: tokenizePrefixArgs(rawArgs),
-  };
-}
-
-async function getRepliedUser(message) {
-  if (!message.reference?.messageId) return null;
-  const repliedMessage = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
-  return repliedMessage?.author || null;
-}
-
-function createPrefixInteraction(message, { subcommand, group = null, values = {} } = {}) {
-  const resolveUser = (value) => {
-    if (!value) return null;
-    if (typeof value === 'object') return value.user || value;
-    const id = value.match(/^(?:<@!?(\d+)>|(\d+))$/)?.slice(1).find(Boolean);
-    if (!id) return null;
-    return message.mentions.users.get(id)
-      || message.guild.members.cache.get(id)?.user
-      || message.client.users.cache.get(id)
-      || null;
-  };
-  const resolveRole = (value) => {
-    const id = value && getMentionedId(value, 'role');
-    return id ? message.guild.roles.cache.get(id) || null : null;
-  };
-  const resolveChannel = (value) => {
-    const id = value && getMentionedId(value, 'channel');
-    return id ? message.guild.channels.cache.get(id) || null : null;
-  };
-  let deferred = false;
-  const send = (payload) => {
-    const { ephemeral, ...messagePayload } = typeof payload === 'string' ? { content: payload } : payload;
-    return message.reply(messagePayload);
-  };
-
-  return {
-    guild: message.guild,
-    guildId: message.guild.id,
-    channel: message.channel,
-    client: message.client,
-    user: message.author,
-    member: message.member,
-    memberPermissions: message.member.permissions,
-    get deferred() { return deferred; },
-    options: {
-      getSubcommand: () => subcommand,
-      getSubcommandGroup: () => group,
-      getUser: (name) => resolveUser(values[name]),
-      getRole: (name) => resolveRole(values[name]),
-      getChannel: (name) => resolveChannel(values[name]),
-      getString: (name) => values[name] ?? null,
-      getInteger: (name) => {
-        const value = Number.parseInt(values[name], 10);
-        return Number.isInteger(value) ? value : null;
-      },
-    },
-    reply: send,
-    deferReply: async () => { deferred = true; },
-    editReply: send,
-  };
-}
-
-function isTicketStaff(member, config) {
-  const supportRoleIds = new Set([
-    config.supportRoleId,
-    ...(config.buttonRoleIds || []).flat(),
-  ].filter(Boolean));
-  return Boolean([...supportRoleIds].some((roleId) => member?.roles?.cache?.has(roleId))
-    || member?.permissions?.has(PermissionFlagsBits.ManageGuild));
-}
-
-async function sendTicketTranscript(channel, config, closedBy = null) {
-  if (!config.transcriptChannelId) {
-    throw new Error('Set a transcript log channel with ,ticket logs #channel before requesting a transcript.');
-  }
-  const logChannel = await channel.guild.channels.fetch(config.transcriptChannelId).catch(() => null);
-  if (!logChannel?.isTextBased?.() || !logChannel.send) {
-    throw new Error('The configured transcript log channel is unavailable or is not a text channel.');
-  }
-
-  const messages = [];
-  let before;
-  while (messages.length < MAX_TRANSCRIPT_MESSAGES) {
-    const page = await channel.messages.fetch({
-      limit: Math.min(100, MAX_TRANSCRIPT_MESSAGES - messages.length),
-      ...(before ? { before } : {}),
-    });
-    if (!page.size) break;
-    messages.push(...page.values());
-    before = page.last()?.id;
-    if (page.size < 100) break;
-  }
-
-  const transcript = messages
-    .sort((left, right) => left.createdTimestamp - right.createdTimestamp)
-    .map((message) => {
-      const timestamp = message.createdAt.toISOString();
-      const attachments = [...message.attachments.values()].map(({ url }) => ` [Attachment: ${url}]`).join('');
-      const body = message.content || (message.embeds.length ? '[Embed]' : '[No text]');
-      return `[${timestamp}] ${message.author.tag} (${message.author.id}): ${body}${attachments}`;
-    })
-    .join('\n');
-  const content = Buffer.from(transcript || 'No messages were found in this ticket.', 'utf8');
-  const clipped = content.length > MAX_TRANSCRIPT_BYTES;
-  const transcriptBuffer = clipped ? content.subarray(0, MAX_TRANSCRIPT_BYTES) : content;
-  const fileName = `${channel.name}-transcript.txt`.replace(/[^a-zA-Z0-9_.-]/g, '-');
-  await logChannel.send({
-    embeds: [buildLogEmbed(
-      'Ticket transcript',
-      `Transcript for <#${channel.id}>${closedBy ? `, closed by ${closedBy}` : ''}.${clipped ? ' Transcript was shortened to fit the upload limit.' : ''}`,
-    )],
-    files: [new AttachmentBuilder(transcriptBuffer, { name: fileName })],
-  });
-  return logChannel;
-}
-
-async function closeTicketChannel(channel, config, closedBy) {
-  await sendTicketTranscript(channel, config, closedBy);
-  await channel.delete(`Ticket closed by ${closedBy}`);
-}
+const roleAssignment = require('./roleAssignment');
+const nsfwLinkStore = require('./nsfwLinkStore');
 
 async function requirePermission(interaction, permission, message) {
   if (interaction.memberPermissions?.has(permission)) return true;
@@ -394,18 +96,9 @@ async function runModeration(interaction, action) {
   }
 
   if (action === 'avatar' || action === 'cover') {
-    const selectedUser = interaction.options.getUser('member') || interaction.user;
-    if (action === 'cover') {
-      await interaction.deferReply({ ephemeral: true });
-      const user = await interaction.client.users.fetch(selectedUser.id, { force: true }).catch(() => selectedUser);
-      const embed = buildUserCardEmbed(user, action);
-      await interaction.editReply(embed.image
-        ? { embeds: [embed] }
-        : { content: `${user.username || 'This user'} does not have a banner photo.` });
-      return;
-    }
+    const user = interaction.options.getUser('member') || interaction.user;
     await interaction.reply({
-      embeds: [buildUserCardEmbed(selectedUser, action)],
+      embeds: [buildUserCardEmbed(user, action)],
       ephemeral: true,
     });
     return;
@@ -466,11 +159,6 @@ async function runRole(interaction) {
     PermissionFlagsBits.ManageRoles,
     'You need the Manage Roles permission to assign roles.',
   )) return;
-  if (!interaction.guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles)) {
-    await interaction.reply({ content: 'I need the Manage Roles permission to assign roles.', ephemeral: true });
-    return;
-  }
-
   const user = interaction.options.getUser('member', true);
   const role = interaction.options.getRole('role', true);
   const member = await interaction.guild.members.fetch(user.id).catch(() => null);
@@ -478,22 +166,14 @@ async function runRole(interaction) {
     await interaction.reply({ content: 'That user is not a member of this server.', ephemeral: true });
     return;
   }
-  if (role.id === interaction.guildId || role.managed || !role.editable) {
-    await interaction.reply({ content: 'I cannot assign that role. Check that it is not managed and is below my highest role.', ephemeral: true });
-    return;
-  }
-  if (!member.manageable) {
-    await interaction.reply({ content: 'I cannot manage that member. Move my highest role above theirs first.', ephemeral: true });
-    return;
-  }
-  if (member.roles.cache.has(role.id)) {
-    await interaction.reply({ content: `${member.user.tag} already has <@&${role.id}>.`, ephemeral: true });
-    return;
-  }
-
   try {
-    await member.roles.add(role, `Role assigned by ${interaction.user.tag}`);
-    await interaction.reply({ content: `Added <@&${role.id}> to ${member.user.tag}.`, ephemeral: true });
+    const result = await roleAssignment.assignRole(
+      interaction.guild,
+      member,
+      role,
+      `Role assigned by ${interaction.user.tag}`,
+    );
+    await interaction.reply({ content: result.message, ephemeral: true });
   } catch (error) {
     console.error(`Could not assign role ${role.id} to ${member.id} in guild ${interaction.guildId}:`, error.message);
     await interaction.reply({ content: 'I could not assign that role. Check my permissions and role hierarchy.', ephemeral: true });
@@ -517,9 +197,16 @@ async function runSet(interaction) {
   if (!await requirePermission(interaction, PermissionFlagsBits.ManageGuild, 'You need the Manage Server permission to change server settings.')) return;
   const channel = interaction.options.getChannel('channel');
   if (setting === 'logs') {
-    logChannelStore.setLogChannel(interaction.guildId, channel?.id || null);
+    const logType = interaction.options.getString('type') || 'default';
+    if (!logChannelStore.setLogChannel(interaction.guildId, channel?.id || null, logType)) {
+      await interaction.reply({ content: 'Choose a valid log type.', ephemeral: true });
+      return;
+    }
+    const typeName = logType.replaceAll('-', ' ');
     await interaction.reply({
-      content: channel ? `Log channel updated to <#${channel.id}>.` : 'Log channel cleared.',
+      content: channel
+        ? `${typeName} log channel updated to <#${channel.id}>.`
+        : `${typeName} log channel cleared.`,
       ephemeral: true,
     });
     return;
@@ -584,251 +271,14 @@ async function runAutoresponder(interaction) {
   });
 }
 
-async function runTicket(interaction) {
-  const action = interaction.options.getSubcommand();
-  const ticketStore = require('./ticketStore');
-  const config = ticketStore.getConfig(interaction.guildId);
-  if (!config.categoryId || !config.supportRoleId) {
-    await interaction.reply({ content: 'Set up tickets first with `,ticket setup #category @support-role [#panel-channel]`.', ephemeral: true });
-    return;
-  }
-
-  if (action === 'create') {
-    if (!isTicketStaff(interaction.member, config)
-      && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-      await interaction.reply({ content: 'Only support staff can create a ticket for another member.', ephemeral: true });
-      return;
-    }
-    const member = interaction.options.getUser('member', true);
-    await interaction.deferReply({ ephemeral: true });
-    const result = await createTicketChannel(interaction.guild, member, config);
-    await interaction.editReply({
-      content: result.alreadyOpen
-        ? `${member.tag} already has an open ticket: <#${result.channel.id}>`
-        : `Ticket created: <#${result.channel.id}>`,
-    });
-    return;
-  }
-
-  if (action === 'close') {
-    const channel = interaction.options.getChannel('channel') || interaction.channel;
-    const ownerId = channel?.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
-    if (channel && channel.parentId === config.categoryId && ownerId
-      && (ownerId === interaction.user.id || isTicketStaff(interaction.member, config)
-        || interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild))) {
-      await interaction.deferReply({ ephemeral: true });
-      await closeTicketChannel(channel, config, interaction.user.tag);
-      await interaction.editReply({ content: `Closed ticket channel <#${channel.id}>.` });
-      return;
-    }
-    await interaction.reply({ content: 'Only the ticket owner or support staff can close a ticket channel.', ephemeral: true });
-  }
-}
-
-async function handleTicketMessage(message) {
-  if (!message.guild || message.author.bot) return false;
-  const command = parseTicketMessage(message.content);
-  if (!command) return false;
-
-  let { action } = command;
-  let args = command.args;
-  if (action === 'set' && args[0]?.toLowerCase() === 'transcript-channel') {
-    action = 'logs';
-    args = args.slice(1);
-  }
-  const ticketStore = require('./ticketStore');
-  const config = ticketStore.getConfig(message.guild.id);
-  const manageGuild = message.member.permissions.has(PermissionFlagsBits.ManageGuild);
-
-  if (action === 'setup') {
-    if (!manageGuild) {
-      await message.reply('You need the Manage Server permission to set up tickets.');
-      return true;
-    }
-    const categoryId = getMentionedId(args[0] || '', 'channel');
-    const supportRoleId = getMentionedId(args[1] || '', 'role');
-    const category = categoryId && message.guild.channels.cache.get(categoryId);
-    const role = supportRoleId && message.guild.roles.cache.get(supportRoleId);
-    let panelChannel = message.channel;
-    let panelArgs = args.slice(2);
-    if (panelArgs[0] && getMentionedId(panelArgs[0], 'channel')) {
-      panelChannel = message.guild.channels.cache.get(getMentionedId(panelArgs[0], 'channel'));
-      panelArgs = panelArgs.slice(1);
-    }
-    if (category?.type !== ChannelType.GuildCategory || !role || !panelChannel?.isTextBased?.() || !panelChannel.send) {
-      await message.reply('Usage: `,ticket setup #category @support-role [#panel-channel]`');
-      return true;
-    }
-    let panelSettings = { buttonLabels: ['Create Ticket'], buttonRoleIds: [[role.id]] };
-    if (panelArgs.length > 0) {
-      const parsedSettings = parseTicketPanelSettings(panelArgs, message.guild);
-      if (parsedSettings.error) {
-        await message.reply(`${parsedSettings.error} Usage: \,ticket setup #category @default-role [#panel] "title" "description" "button" @Role [@Role2 @Role3] ...`);
-        return true;
-      }
-      panelSettings = parsedSettings.settings;
-    }
-    ticketStore.setConfig(message.guild.id, {
-      categoryId: category.id,
-      supportRoleId: role.id,
-      panelChannelId: panelChannel.id,
-      ...panelSettings,
-    });
-    const panelConfig = ticketStore.getConfig(message.guild.id);
-    await panelChannel.send({
-      embeds: [buildTicketPanelEmbed(panelConfig.panelTitle, panelConfig.panelDescription)],
-      components: [buildTicketOpenRow(panelConfig.buttonLabels)],
-    });
-    await message.reply(`Ticket setup saved. Panel posted in <#${panelChannel.id}>; tickets will be created in <#${category.id}>.`);
-    return true;
-  }
-
-  if (action === 'panel') {
-    if (!manageGuild) {
-      await message.reply('You need the Manage Server permission to post a ticket panel.');
-      return true;
-    }
-    if (!config.categoryId || !config.supportRoleId) {
-      await message.reply('Set up tickets first with `,ticket setup #category @support-role [#panel-channel]`.');
-      return true;
-    }
-    let panelChannel = message.channel;
-    let panelArgs = args;
-    if (args[0] && getMentionedId(args[0], 'channel')) {
-      panelChannel = message.guild.channels.cache.get(getMentionedId(args[0], 'channel'));
-      panelArgs = args.slice(1);
-    }
-    if (!panelChannel?.isTextBased?.() || !panelChannel.send) {
-      await message.reply('Usage: `,ticket panel [#channel] "title" "description" "button 1" @Support [@Role2 @Role3] ...`');
-      return true;
-    }
-    let panelSettings = {};
-    if (panelArgs.length > 0) {
-      const parsedSettings = parseTicketPanelSettings(panelArgs, message.guild);
-      if (parsedSettings.error) {
-        await message.reply(`${parsedSettings.error} Usage: \,ticket panel [#channel] "title" "description" "button 1" @Support [@Role2 @Role3] ... (up to 5 buttons)`);
-        return true;
-      }
-      panelSettings = parsedSettings.settings;
-    }
-    ticketStore.setConfig(message.guild.id, { panelChannelId: panelChannel.id, ...panelSettings });
-    const panelConfig = ticketStore.getConfig(message.guild.id);
-    await panelChannel.send({
-      embeds: [buildTicketPanelEmbed(panelConfig.panelTitle, panelConfig.panelDescription)],
-      components: [buildTicketOpenRow(panelConfig.buttonLabels)],
-    });
-    await message.reply(`Ticket panel posted in <#${panelChannel.id}>.`);
-    return true;
-  }
-
-  if (action === 'logs') {
-    if (!manageGuild) {
-      await message.reply('You need the Manage Server permission to configure ticket transcript logs.');
-      return true;
-    }
-    if (args[0]?.toLowerCase() === 'off') {
-      ticketStore.setConfig(message.guild.id, { transcriptChannelId: null });
-      await message.reply('Ticket transcript logging is disabled.');
-      return true;
-    }
-    const channelId = getMentionedId(args[0] || '', 'channel');
-    const channel = channelId && message.guild.channels.cache.get(channelId);
-    if (!channel?.isTextBased?.() || !channel.send) {
-      await message.reply('Usage: `,ticket set transcript-channel #channel` or `,ticket set transcript-channel off`');
-      return true;
-    }
-    ticketStore.setConfig(message.guild.id, { transcriptChannelId: channel.id });
-    await message.reply(`Ticket transcripts will be logged in <#${channel.id}>.`);
-    return true;
-  }
-
-  if (action === 'create') {
-    if (!isTicketStaff(message.member, config)) {
-      await message.reply('Only support staff can create a ticket for another member.');
-      return true;
-    }
-    const userId = args[0]?.match(/^(?:<@!?(\d+)>|(\d+))$/)?.slice(1).find(Boolean);
-    const user = userId && (message.mentions.users.get(userId)
-      || message.guild.members.cache.get(userId)?.user
-      || message.client.users.cache.get(userId));
-    if (!user) {
-      await message.reply('Usage: `,ticket create @member`');
-      return true;
-    }
-    const result = await createTicketChannel(message.guild, user, config);
-    await message.reply(result.alreadyOpen
-      ? `${user.tag} already has an open ticket: <#${result.channel.id}>`
-      : `Ticket created: <#${result.channel.id}>`);
-    return true;
-  }
-
-  if (!['transcript', 'close'].includes(action)) {
-    await message.reply('Ticket commands: `,ticket setup`, `,ticket panel`, `,ticket set transcript-channel #channel`, `,ticket create @member`, `,ticket transcript`, `,ticket close [#channel]`.');
-    return true;
-  }
-
-  const targetChannel = action === 'close' && args[0]
-    ? message.guild.channels.cache.get(getMentionedId(args[0], 'channel'))
-    : message.channel;
-  const ownerId = targetChannel?.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
-  if (!ownerId || targetChannel.parentId !== config.categoryId) {
-    await message.reply('Use this command inside a ticket channel.');
-    return true;
-  }
-  if (ownerId !== message.author.id && !isTicketStaff(message.member, config)) {
-    await message.reply('Only the ticket owner or support staff can manage this ticket.');
-    return true;
-  }
-  if (action === 'transcript') {
-    const logChannel = await sendTicketTranscript(targetChannel, config);
-    await message.reply(`Transcript uploaded to <#${logChannel.id}>.`);
-    return true;
-  }
-
-  await closeTicketChannel(targetChannel, config, message.author.tag);
-  return true;
-}
-
-async function handleTicketButton(interaction) {
-  const isOpenButton = interaction.customId === TICKET_OPEN_BUTTON_ID
-    || interaction.customId?.startsWith(`${TICKET_OPEN_BUTTON_ID}:`);
-  if (!interaction.isButton?.() || (!isOpenButton && interaction.customId !== TICKET_CLOSE_BUTTON_ID)) return false;
-  const buttonIndex = Number.parseInt(interaction.customId.slice(TICKET_OPEN_BUTTON_ID.length + 1), 10) || 0;
-  const ticketStore = require('./ticketStore');
-  const config = ticketStore.getConfig(interaction.guildId);
-
-  if (isOpenButton) {
-    if (!config.categoryId || !config.supportRoleId) {
-      await interaction.reply({ content: 'Tickets are not configured in this server yet.', ephemeral: true });
-      return true;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    const result = await createTicketChannel(interaction.guild, interaction.user, config, buttonIndex);
-    await interaction.editReply({
-      content: result.alreadyOpen
-        ? `You already have an open ticket: <#${result.channel.id}>`
-        : `Your ticket is ready: <#${result.channel.id}>`,
-    });
-    return true;
-  }
-
-  const ownerId = interaction.channel?.topic?.match(/^ticket-owner:(\d+)$/)?.[1];
-  const isSupport = interaction.member?.roles?.cache?.has(config.supportRoleId);
-  const isManager = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
-  if (!ownerId || (ownerId !== interaction.user.id && !isSupport && !isManager)) {
-    await interaction.reply({ content: 'Only the ticket owner or support staff can close this ticket.', ephemeral: true });
-    return true;
-  }
-  await interaction.deferReply({ ephemeral: true });
-  await closeTicketChannel(interaction.channel, config, interaction.user.tag);
-  await interaction.editReply({ content: 'Ticket transcript logged and channel closed.' });
-  return true;
-}
-
 async function runAntinuke(interaction) {
   if (!await requirePermission(interaction, PermissionFlagsBits.ManageGuild, 'You need the Manage Server permission to configure antinuke.')) return;
   const group = interaction.options.getSubcommandGroup(false);
   const action = interaction.options.getSubcommand();
+  if (action === 'setup') {
+    await interaction.reply({ ...antinukeInteractions.buildDashboard(antinukeStore.getConfig(interaction.guildId)), ephemeral: true });
+    return;
+  }
   if (group) {
     const targetType = group.slice('whitelist-'.length);
     if (action === 'list') {
@@ -872,6 +322,44 @@ async function runAntinuke(interaction) {
     await interaction.reply({ content: `Antinuke punishment set to \`${punishment}\`.`, ephemeral: true });
     return;
   }
+  if (action === 'set-action-punishment') {
+    const targetAction = interaction.options.getString('action', true);
+    const punishment = interaction.options.getString('punishment', true);
+    const changed = targetAction === 'raid-join-burst'
+      ? antinukeStore.updateRaidConfig(interaction.guildId, { punishment })
+      : antinukeStore.setActionPunishment(interaction.guildId, targetAction, punishment);
+    await interaction.reply({
+      content: changed
+        ? `The ${targetAction.replaceAll('-', ' ')} response is now \`${punishment}\`.`
+        : 'That action or punishment could not be configured.',
+      ephemeral: true,
+    });
+    return;
+  }
+  if (action === 'raid-config') {
+    const update = {};
+    const enabled = interaction.options.getBoolean('enabled');
+    const threshold = interaction.options.getInteger('threshold');
+    const windowSeconds = interaction.options.getInteger('window-seconds');
+    const punishment = interaction.options.getString('punishment');
+    if (enabled !== null) update.enabled = enabled;
+    if (threshold !== null) update.threshold = threshold;
+    if (windowSeconds !== null) update.windowSeconds = windowSeconds;
+    if (punishment !== null) update.punishment = punishment;
+    if (Object.keys(update).length === 0) {
+      await interaction.reply({ content: 'Choose at least one raid setting to update.', ephemeral: true });
+      return;
+    }
+    const changed = antinukeStore.updateRaidConfig(interaction.guildId, update);
+    const config = antinukeStore.getConfig(interaction.guildId).raid;
+    await interaction.reply({
+      content: changed
+        ? `Join-raid protection is ${config.enabled ? 'enabled' : 'disabled'}: ${config.threshold} joins in ${config.windowSeconds} seconds; response: ${config.punishment}.`
+        : 'Invalid raid settings. Threshold must be 2-50, window 5-60 seconds, and punishment must be supported.',
+      ephemeral: true,
+    });
+    return;
+  }
 
   const config = antinukeStore.getConfig(interaction.guildId);
   const punishment = {
@@ -881,228 +369,21 @@ async function runAntinuke(interaction) {
   const actionWord = THRESHOLD === 1 ? 'action' : 'actions';
   const secondWord = WINDOW_MS === 1_000 ? 'second' : 'seconds';
   const status = `Antinuke is ${config.enabled ? 'enabled' : 'disabled'}. Threshold: ${THRESHOLD} matching ${actionWord} within ${WINDOW_MS / 1000} ${secondWord}; punishment: ${punishment}.`;
-  const readiness = antinuke.getReadiness(interaction.guild, interaction.client, config.punishment);
+  const overrideCount = Object.keys(config.actionPunishments || {}).length;
+  const raidStatus = `Join-raid protection: ${config.raid.enabled ? 'enabled' : 'disabled'} (${config.raid.threshold} joins in ${config.raid.windowSeconds}s; ${config.raid.punishment}).`;
+  const readiness = antinuke.getReadiness(interaction.guild, interaction.client, config.punishment, config);
   const checks = [
     `GuildModeration intent: ${readiness.moderationIntent ? 'ready' : 'MISSING'}`,
     `View Audit Log: ${readiness.viewAuditLog ? 'ready' : 'MISSING'}`,
     `Punishment permission${readiness.punishmentPermissionName ? ` (${readiness.punishmentPermissionName})` : ''}: ${readiness.punishmentPermission ? 'ready' : 'MISSING'}`,
+    `Missing permissions for configured responses: ${readiness.missingPunishmentPermissions.length ? readiness.missingPunishmentPermissions.join(', ') : 'none'}`,
     'The bot role must be above the actor and any roles it needs to remove.',
     'The server owner and whitelisted actors/targets are exempt.',
   ].join('\n');
   const allLists = action === 'whitelist-list'
     ? `\nRoles: ${config.roleIds.length ? config.roleIds.map((id) => `<@&${id}>`).join(', ') : 'none'}\nCategories: ${config.categoryIds.length ? config.categoryIds.map((id) => `<#${id}>`).join(', ') : 'none'}\nChannels: ${config.channelIds.length ? config.channelIds.map((id) => `<#${id}>`).join(', ') : 'none'}`
     : '';
-  await interaction.reply({ content: `${status}\n${checks}${allLists}`, ephemeral: true });
-}
-
-async function handlePrefixWelcome(message, command) {
-  const { name, args, rawArgs } = command;
-  const hasManageGuild = message.member.permissions.has(PermissionFlagsBits.ManageGuild);
-  if (!hasManageGuild) {
-    await message.reply('You need the Manage Server permission to configure welcome messages.');
-    return true;
-  }
-
-  if (name === 'set-welcome-channel' || (name === 'welcome' && args[0] === 'channel')) {
-    const token = name === 'welcome' ? args[1] : args[0];
-    const channel = token && message.guild.channels.cache.get(getMentionedId(token, 'channel'));
-    if (!channel?.isTextBased?.() || channel.isThread?.()) {
-      await message.reply('Usage: `,welcome channel #text-channel`');
-      return true;
-    }
-    welcomeStore.update(message.guild.id, { channelId: channel.id, enabled: true });
-    await message.reply(`Welcome messages are enabled in <#${channel.id}>.`);
-    return true;
-  }
-
-  if (name === 'set-welcome-message' || (name === 'welcome' && args[0] === 'message')) {
-    const value = name === 'welcome' ? args.slice(1).join(' ') : rawArgs;
-    const messageText = value.replace(/^("([\s\S]*)"|'([\s\S]*)')$/, '$2$3').trim();
-    if (!messageText || messageText.length > 2000) {
-      await message.reply('Provide a welcome message up to 2,000 characters.');
-      return true;
-    }
-    welcomeStore.update(message.guild.id, { message: messageText });
-    await message.reply('Welcome message updated.');
-    return true;
-  }
-
-  if (name === 'edit-embed' || (name === 'welcome' && args[0] === 'embed' && args[1] === 'edit')) {
-    await message.channel.send({
-      content: 'Choose an embed section to edit:',
-      components: [welcomeInteractions.buildEmbedEditorMenu()],
-    });
-    return true;
-  }
-
-  if (name === 'welcome' && args[0] === 'embed' && args[1] === 'clear') {
-    const field = args[2] || null;
-    const update = welcome.parseEmbedUpdate('clear', field);
-    if (!update) {
-      await message.reply('Choose a valid embed field: title, description, color, footer, author, image, or thumbnail.');
-      return true;
-    }
-    welcomeStore.update(message.guild.id, { embed: update });
-    await message.reply(field ? `Welcome embed field \`${field}\` cleared.` : 'Welcome embed cleared.');
-    return true;
-  }
-
-  if (name === 'welcome' && args[0] === 'disable') {
-    welcomeStore.update(message.guild.id, { enabled: false });
-    await message.reply('Welcome messages are disabled.');
-    return true;
-  }
-
-  if (name === 'welcome' && args[0] === 'status') {
-    const config = welcomeStore.getConfig(message.guild.id);
-    await message.reply(`Welcome messages are ${config.enabled ? 'enabled' : 'disabled'}; channel: ${config.channelId ? `<#${config.channelId}>` : 'not set'}.`);
-    return true;
-  }
-
-  if (name === 'welcome' && args[0] === 'preview') {
-    const payload = welcome.buildPayload(welcomeStore.getConfig(message.guild.id), message.member);
-    if (!payload.content && payload.embeds.length === 0) {
-      await message.reply('Set a welcome message or embed content before previewing.');
-      return true;
-    }
-    await message.channel.send(payload);
-    await message.reply('Welcome preview sent.');
-    return true;
-  }
-
-  return false;
-}
-
-async function handlePrefixCommand(message) {
-  if (!message.guild || message.author.bot) return false;
-  wrapCommandReplyMethods(message, ['reply']);
-  const command = parsePrefixCommand(message.content);
-  if (!command) return false;
-  if (command.name === 'ticket') return handleTicketMessage(message);
-
-  const { name, args } = command;
-  if (name === 'help') {
-    await message.reply({ embeds: [buildHelpEmbed()] });
-    return true;
-  }
-  if (['welcome', 'set-welcome-channel', 'set-welcome-message', 'edit-embed'].includes(name)) {
-    const handled = await handlePrefixWelcome(message, command);
-    if (handled) return true;
-  }
-  if (name === 'afk') {
-    const reason = command.rawArgs.trim() || 'AFK';
-    const member = message.member;
-    const originalNickname = member?.nickname || member?.user?.username || null;
-    afkStore.set(message.guild.id, message.author.id, reason, originalNickname);
-    if (member && typeof member.setNickname === 'function') {
-      await require('./afk').applyAfkNickname(member);
-    }
-    await message.reply({ embeds: [buildAfkEmbed(message.author, reason)] });
-    return true;
-  }
-
-  if (name === 'set') {
-    const action = args[0]?.toLowerCase();
-    const value = args[1] || null;
-    const roleRequired = action === 'jail-role';
-    const resolved = roleRequired
-      ? getMentionedId(value || '', 'role') && message.guild.roles.cache.get(getMentionedId(value || '', 'role'))
-      : getMentionedId(value || '', 'channel') && message.guild.channels.cache.get(getMentionedId(value || '', 'channel'));
-    if (!['logs', 'temp-voice', 'jail-role'].includes(action)
-      || (roleRequired && !resolved)
-      || (value && !resolved)) {
-      await message.reply('Usage: `,set logs [#channel]`, `,set temp-voice [#voice-channel]`, or `,set jail-role @role`');
-      return true;
-    }
-    const interaction = createPrefixInteraction(message, {
-      subcommand: action,
-      values: { channel: roleRequired ? null : value, role: roleRequired ? value : null },
-    });
-    await runSet(interaction);
-    return true;
-  }
-
-  if (name === 'role') {
-    if (args[0]?.toLowerCase() !== 'add' || !args[1] || !args[2]) {
-      await message.reply('Usage: `,role add @member @role`');
-      return true;
-    }
-    await runRole(createPrefixInteraction(message, {
-      subcommand: 'add',
-      values: { member: args[1], role: args[2] },
-    }));
-    return true;
-  }
-
-  if (MODERATION_PERMISSIONS[name] || ['avatar', 'cover'].includes(name)) {
-    const values = { member: args[0] || null };
-    if (['avatar', 'cover'].includes(name) && !values.member) {
-      values.member = await getRepliedUser(message);
-    }
-    if (name === 'purge') values.amount = args[0] || null;
-    if (name === 'timeout') {
-      values.duration = args[1] || null;
-      values.reason = args.slice(2).join(' ') || null;
-    } else if (['kick', 'ban', 'mute'].includes(name)) {
-      values.reason = args.slice(1).join(' ') || null;
-    }
-    const requiresMember = ['kick', 'ban', 'timeout', 'mute', 'jail', 'unjail'].includes(name);
-    if (requiresMember && !createPrefixInteraction(message, { values }).options.getUser('member')) {
-      await message.reply(`Usage: \,${name} @member${name === 'timeout' ? ' 10m [reason]' : ' [reason]'}`);
-      return true;
-    }
-    await runModeration(createPrefixInteraction(message, { values }), name);
-    return true;
-  }
-
-  if (name === 'autoresponder') {
-    const action = args[0]?.toLowerCase();
-    if (!['add', 'remove', 'list'].includes(action)) {
-      await message.reply('Usage: `,autoresponder add trigger response`, `,autoresponder remove trigger`, or `,autoresponder list`');
-      return true;
-    }
-    const trigger = args[1] || null;
-    const response = args.slice(2).join(' ') || null;
-    if ((action === 'add' && (!trigger || !response)) || (action === 'remove' && !trigger)) {
-      await message.reply('Usage: `,autoresponder add trigger response` or `,autoresponder remove trigger`');
-      return true;
-    }
-    await runAutoresponder(createPrefixInteraction(message, {
-      subcommand: action,
-      values: { trigger, response },
-    }));
-    return true;
-  }
-
-  if (name === 'antinuke') {
-    let action = args[0]?.toLowerCase() || 'status';
-    let group = null;
-    let target = null;
-    if (action.startsWith('whitelist-role') || action.startsWith('whitelist-category') || action.startsWith('whitelist-channel')) {
-      group = action;
-      action = args[1]?.toLowerCase() || 'list';
-      target = args[2] || null;
-    }
-    const targetType = group?.slice('whitelist-'.length);
-    if (!['enable', 'disable', 'status', 'set-punishment', 'whitelist-list', 'add', 'remove', 'list'].includes(action)
-      || ((action === 'add' || action === 'remove') && !target)) {
-      await message.reply('Use `,antinuke status`, `enable`, `disable`, `set-punishment <type>`, or `whitelist-role|category|channel add|remove|list <target>`.');
-      return true;
-    }
-    await runAntinuke(createPrefixInteraction(message, {
-      subcommand: action,
-      group,
-      values: {
-        punishment: group ? null : args[1] || null,
-        role: targetType === 'role' ? target : null,
-        channel: ['category', 'channel'].includes(targetType) ? target : null,
-      },
-    }));
-    return true;
-  }
-
-  await message.reply(`Unknown command. Use \,help. Slash commands remain available too.`);
-  return true;
+  await interaction.reply({ content: `${status}\nAction-specific responses: ${overrideCount}.\n${raidStatus}\n${checks}${allLists}`, ephemeral: true });
 }
 
 async function handleCommand(interaction) {
@@ -1121,26 +402,39 @@ async function handleCommand(interaction) {
   }
   if (name === 'afk') {
     const reason = interaction.options.getString('reason')?.trim() || 'AFK';
-    const member = interaction.member || await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
-    const originalNickname = member?.nickname || member?.user?.username || null;
-    afkStore.set(interaction.guildId, interaction.user.id, reason, originalNickname);
-    if (member && typeof member.setNickname === 'function') {
-      const afk = require('./afk');
-      await afk.applyAfkNickname(member);
+    afkStore.set(interaction.guildId, interaction.user.id, reason);
+    await interaction.reply({ content: `You are now AFK: ${reason}`, ephemeral: true });
+    return true;
+  }
+  if (name === 'ticket') {
+    if (interaction.options.getSubcommand() === 'setup') {
+      await tickets.handleSetupCommand(interaction, ticketStore);
     }
-    await interaction.reply({ embeds: [buildAfkEmbed(interaction.user, reason)], ephemeral: true });
+    return true;
+  }
+  if (name === 'antinsfw') {
+    if (!await requirePermission(interaction, PermissionFlagsBits.ManageGuild, 'You need the Manage Server permission to configure NSFW link protection.')) return true;
+    if (interaction.options.getSubcommandGroup() !== 'server'
+      || interaction.options.getSubcommand() !== 'link') return true;
+    const enabled = interaction.options.getBoolean('enabled', true);
+    nsfwLinkStore.setEnabled(interaction.guildId, enabled);
+    await interaction.reply({
+      content: `NSFW server invite-link protection is now ${enabled ? 'enabled' : 'disabled'}.`,
+      ephemeral: true,
+    });
     return true;
   }
   if (name === 'autoresponder') {
     await runAutoresponder(interaction);
     return true;
   }
-  if (name === 'ticket') {
-    await runTicket(interaction);
-    return true;
-  }
   if (name === 'antinuke') {
     await runAntinuke(interaction);
+    return true;
+  }
+  if (name === 'mod') {
+    const selected = interaction.options.getSubcommand();
+    await runModeration(interaction, selected === 'av' ? 'avatar' : selected);
     return true;
   }
   if (MODERATION_PERMISSIONS[name] || ['avatar', 'cover'].includes(name)) {
@@ -1151,14 +445,3 @@ async function handleCommand(interaction) {
 }
 
 module.exports = handleCommand;
-module.exports.handleTicketButton = handleTicketButton;
-module.exports.handleTicketMessage = handleTicketMessage;
-module.exports.handlePrefixCommand = handlePrefixCommand;
-module.exports.parsePrefixCommand = parsePrefixCommand;
-module.exports.getRepliedUser = getRepliedUser;
-module.exports.buildAfkEmbed = buildAfkEmbed;
-module.exports.buildTicketOpenRow = buildTicketOpenRow;
-module.exports.buildTicketPanelEmbed = buildTicketPanelEmbed;
-module.exports.createTicketChannel = createTicketChannel;
-module.exports.parseTicketPanelSettings = parseTicketPanelSettings;
-module.exports.parseTicketMessage = parseTicketMessage;

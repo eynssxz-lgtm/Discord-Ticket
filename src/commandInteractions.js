@@ -3,6 +3,7 @@ const {
   PermissionFlagsBits,
   SlashCommandBuilder,
 } = require('discord.js');
+const { ACTION_GROUP_NAMES } = require('./antinuke');
 
 const MODERATION_PERMISSIONS = {
   kick: PermissionFlagsBits.KickMembers,
@@ -12,18 +13,6 @@ const MODERATION_PERMISSIONS = {
   purge: PermissionFlagsBits.ManageMessages,
   jail: PermissionFlagsBits.ManageRoles,
   unjail: PermissionFlagsBits.ManageRoles,
-};
-
-const MODERATION_DESCRIPTIONS = {
-  kick: 'Kick a member',
-  ban: 'Ban a member',
-  timeout: 'Timeout a member',
-  mute: 'Mute a member for 10 minutes',
-  purge: 'Delete recent messages',
-  jail: 'Jail a member',
-  unjail: 'Unjail a member',
-  avatar: 'Show a member avatar',
-  cover: 'Show a member banner photo',
 };
 
 function addModerationOptions(subcommand, action) {
@@ -71,7 +60,7 @@ function addModerationOptions(subcommand, action) {
 function buildModerationCommand(action) {
   const command = new SlashCommandBuilder()
     .setName(action)
-    .setDescription(MODERATION_DESCRIPTIONS[action] || `Run the ${action} command`);
+    .setDescription(`Run the ${action} command`);
   if (MODERATION_PERMISSIONS[action]) {
     command.setDefaultMemberPermissions(MODERATION_PERMISSIONS[action]);
   }
@@ -88,11 +77,23 @@ function getCommands() {
       .setDescription('Configure server settings')
       .addSubcommand((subcommand) => subcommand
         .setName('logs')
-        .setDescription('Set or clear the server log channel')
+        .setDescription('Set or clear a server log channel by event type')
         .addChannelOption((option) => option
           .setName('channel')
           .setDescription('Text channel, or leave empty to clear')
           .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+          .setRequired(false))
+        .addStringOption((option) => option
+          .setName('type')
+          .setDescription('Which event type uses this channel')
+          .addChoices(
+            { name: 'Default (all unassigned logs)', value: 'default' },
+            { name: 'Voice activity', value: 'voice' },
+            { name: 'Message deletions', value: 'message-delete' },
+            { name: 'Deleted images', value: 'image-delete' },
+            { name: 'Deleted videos', value: 'video-delete' },
+            { name: 'Antinuke and security', value: 'security' },
+          )
           .setRequired(false)))
       .addSubcommand((subcommand) => subcommand
         .setName('temp-voice')
@@ -112,22 +113,26 @@ function getCommands() {
     ...['kick', 'ban', 'timeout', 'mute', 'purge', 'jail', 'unjail', 'avatar', 'cover']
       .map(buildModerationCommand),
     new SlashCommandBuilder()
-      .setName('ticket')
-      .setDescription('Manage support tickets')
-      .addSubcommand((subcommand) => subcommand
-        .setName('create')
-        .setDescription('Create a new support ticket for a user')
-        .addUserOption((option) => option
-          .setName('member')
-          .setDescription('Member to create a ticket for')
-          .setRequired(true)))
-      .addSubcommand((subcommand) => subcommand
-        .setName('close')
-        .setDescription('Close the current ticket channel')
-        .addChannelOption((option) => option
-          .setName('channel')
-          .setDescription('Ticket channel to close')
-          .setRequired(false))),
+      .setName('mod')
+      .setDescription('Run a moderation action')
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('kick').setDescription('Kick a member'), 'kick'))
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('ban').setDescription('Ban a member'), 'ban'))
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('timeout').setDescription('Timeout a member'), 'timeout'))
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('mute').setDescription('Mute a member for 10 minutes'), 'mute'))
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('purge').setDescription('Delete recent messages'), 'purge'))
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('jail').setDescription('Jail a member'), 'jail'))
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('unjail').setDescription('Unjail a member'), 'unjail'))
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('av').setDescription('Show a member avatar'), 'avatar'))
+      .addSubcommand((subcommand) => addModerationOptions(subcommand
+        .setName('cover').setDescription('Show a member cover'), 'cover')),
     new SlashCommandBuilder()
       .setName('role')
       .setDescription('Manage member roles')
@@ -143,6 +148,27 @@ function getCommands() {
           .setName('role')
           .setDescription('Role to add')
           .setRequired(true))),
+    new SlashCommandBuilder()
+      .setName('ticket')
+      .setDescription('Configure and manage private support tickets')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .addSubcommand((subcommand) => subcommand
+        .setName('setup')
+        .setDescription('Create or update the ticket panel')
+        .addChannelOption((option) => option
+          .setName('channel')
+          .setDescription('Where the ticket panel is posted; defaults to this channel')
+          .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+          .setRequired(false))
+        .addChannelOption((option) => option
+          .setName('category')
+          .setDescription('Category where private tickets are created')
+          .addChannelTypes(ChannelType.GuildCategory)
+          .setRequired(false))
+        .addRoleOption((option) => option
+          .setName('support-role')
+          .setDescription('Role that can view and close tickets')
+          .setRequired(false))),
     new SlashCommandBuilder()
       .setName('afk')
       .setDescription('Set your AFK status and optional reason')
@@ -174,6 +200,7 @@ function getCommands() {
     new SlashCommandBuilder()
       .setName('antinuke')
       .setDescription('Configure protection against destructive server actions')
+      .addSubcommand((subcommand) => subcommand.setName('setup').setDescription('Open interactive security settings'))
       .addSubcommand((subcommand) => subcommand.setName('enable').setDescription('Enable antinuke'))
       .addSubcommand((subcommand) => subcommand.setName('disable').setDescription('Disable antinuke'))
       .addSubcommand((subcommand) => subcommand.setName('status').setDescription('Show antinuke status'))
@@ -189,6 +216,48 @@ function getCommands() {
             { name: 'Ban', value: 'ban' },
             { name: 'None', value: 'none' },
           ).setRequired(true)))
+      .addSubcommand((subcommand) => subcommand
+        .setName('set-action-punishment')
+        .setDescription('Set an automatic response for one action group')
+        .addStringOption((option) => option
+          .setName('action')
+          .setDescription('Action group to configure')
+          .addChoices(...[...ACTION_GROUP_NAMES, 'raid-join-burst'].map((value) => ({
+            name: value.replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()),
+            value,
+          })))
+          .setRequired(true))
+        .addStringOption((option) => option
+          .setName('punishment')
+          .setDescription('Action to take')
+          .addChoices(
+            { name: 'Remove all manageable roles', value: 'remove-roles' },
+            { name: 'Timeout', value: 'timeout' },
+            { name: 'Kick', value: 'kick' },
+            { name: 'Ban', value: 'ban' },
+            { name: 'Log only', value: 'none' },
+          )
+          .setRequired(true)))
+      .addSubcommand((subcommand) => subcommand
+        .setName('raid-config')
+        .setDescription('Configure the join-raid guard')
+        .addBooleanOption((option) => option
+          .setName('enabled').setDescription('Enable or disable join-raid detection').setRequired(false))
+        .addIntegerOption((option) => option
+          .setName('threshold').setDescription('Joins needed to detect a raid (2-50)')
+          .setMinValue(2).setMaxValue(50).setRequired(false))
+        .addIntegerOption((option) => option
+          .setName('window-seconds').setDescription('Time window (5-60 seconds)')
+          .setMinValue(5).setMaxValue(60).setRequired(false))
+        .addStringOption((option) => option
+          .setName('punishment').setDescription('Action to take against joining members')
+          .addChoices(
+            { name: 'Remove all manageable roles', value: 'remove-roles' },
+            { name: 'Timeout', value: 'timeout' },
+            { name: 'Kick', value: 'kick' },
+            { name: 'Ban', value: 'ban' },
+            { name: 'Log only', value: 'none' },
+          ).setRequired(false)))
       .addSubcommand((subcommand) => subcommand.setName('whitelist-list').setDescription('List all whitelist entries'))
       .addSubcommandGroup((group) => group
         .setName('whitelist-role')
@@ -216,6 +285,20 @@ function getCommands() {
         .addSubcommand((subcommand) => subcommand.setName('remove').setDescription('Remove a whitelisted channel')
           .addChannelOption((option) => option.setName('channel').setDescription('Channel to remove').setRequired(true)))
         .addSubcommand((subcommand) => subcommand.setName('list').setDescription('List whitelisted channels'))),
+    new SlashCommandBuilder()
+      .setName('antinsfw')
+      .setDescription('Manage age-restricted server invite link protection')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .addSubcommandGroup((group) => group
+        .setName('server')
+        .setDescription('Configure server-link protection')
+        .addSubcommand((subcommand) => subcommand
+          .setName('link')
+          .setDescription('Block invites to age-restricted channels')
+          .addBooleanOption((option) => option
+            .setName('enabled')
+            .setDescription('Enable or disable NSFW invite-link blocking')
+            .setRequired(true)))),
   ].map((command) => command.toJSON());
 }
 
@@ -223,48 +306,31 @@ function buildHelpEmbed() {
   return {
     color: 0x5865f2,
     title: 'SINCLAIR Commands',
-    description: 'Commands work as slash commands or with the `,` prefix. Examples: `,help`, `,afk reason`, `,set logs #mod-logs`.',
     fields: [
       {
-        name: 'General & setup',
+        name: 'General and setup',
         value: [
-          '`/help` / `,help`', '`/afk [reason]` / `,afk [reason]`',
-          '`/set logs [channel]`', '`/set temp-voice [channel]`',
-          '`/set jail-role role`', '`/set-welcome-channel channel`',
-          '`/set-welcome-message message`', '`/edit-embed`',
-          '`,set logs [#channel]`', '`,set temp-voice [#voice-channel]`',
-          '`,set jail-role @role`', '`,set-welcome-channel #channel`',
-          '`,set-welcome-message text`', '`,edit-embed`',
+          '`/help`',
+          '`/antinsfw server link enabled:true|false`',
+          '`/afk [reason]`',
+          '`/set logs [channel] [type]` (default, voice, message-delete, image-delete, video-delete, security)',
+          '`/set temp-voice [channel]`',
+          '`/set jail-role role`',
+          '`/ticket setup [channel] [category] [support-role]`',
         ].join('\n'),
       },
       {
         name: 'Roles',
-        value: [
-          '`/role add member role` / `,role add @member @role`',
-        ].join('\n'),
+        value: '`/role add member role`\n`,role add <user ID or mention> <role name, ID, or mention>`',
       },
       {
         name: 'Moderation',
         value: [
-          '`/kick member [reason]`', '`/ban member [reason]`',
-          '`/timeout member [duration] [reason]`', '`/mute member [reason]`',
-          '`/purge [amount]`', '`/jail member`', '`/unjail member`',
-          '`/avatar [member]`', '`/cover [member]`',
-          '`,kick @member [reason]`', '`,ban @member [reason]`',
-          '`,timeout @member 10m [reason]`', '`,mute @member [reason]`',
-          '`,purge [amount]`', '`,jail @member`', '`,unjail @member`',
-          '`,av [@member]` (shortcut for `/avatar`)', '`,cover [@member]`',
-        ].join('\n'),
-      },
-      {
-        name: 'Tickets',
-        value: [
-          '`,ticket setup #tickets @Default [#panel] "title" "description" "button" @Role [@Role2 @Role3] ...`',
-          '`,ticket panel [#channel] "title" "description" "button" @Role [@Role2 @Role3] ...`',
-          '(1-5 buttons, each with 1-3 support roles)',
-          '`,ticket set transcript-channel #transcripts`',
-          '`,ticket create @member`', '`,ticket transcript`', '`,ticket close [#channel]`',
-          '`/ticket create member:@user`', '`/ticket close [channel]`',
+          '`/kick member [reason]`, `/ban member [reason]`',
+          '`/timeout member [duration] [reason]`, `/mute member [reason]`',
+          '`/purge [amount]`, `/jail member`, `/unjail member`',
+          '`/avatar [member]`, `/cover [member]`',
+          '`/mod kick|ban|timeout|mute|purge|jail|unjail|av|cover`',
         ].join('\n'),
       },
       {
@@ -273,36 +339,38 @@ function buildHelpEmbed() {
           '`/autoresponder add trigger response`',
           '`/autoresponder remove trigger`',
           '`/autoresponder list`',
-          '`,autoresponder add trigger response`',
-          '`,autoresponder remove trigger`', '`,autoresponder list`',
         ].join('\n'),
       },
       {
         name: 'Antinuke',
         value: [
-          '`/antinuke enable|disable|status`',
-          '`/antinuke set-punishment punishment`',
+          '`/antinuke setup`, `/antinuke enable|disable|status`',
+          '`/antinuke set-punishment punishment` (remove-roles, timeout, kick, ban, none)',
+          '`/antinuke set-action-punishment action punishment`',
+          '`/antinuke raid-config [enabled] [threshold] [window-seconds] [punishment]`',
           '`/antinuke whitelist-list`',
           '`/antinuke whitelist-role add|remove|list role`',
           '`/antinuke whitelist-category add|remove|list channel`',
           '`/antinuke whitelist-channel add|remove|list channel`',
-          '`,antinuke enable|disable|status`',
-          '`,antinuke set-punishment type`',
-          '`,antinuke whitelist-role|category|channel add|remove|list target`',
         ].join('\n'),
       },
       {
         name: 'Welcome messages',
         value: [
-          '`/welcome channel channel`', '`/welcome message message`',
-          '`/welcome status`', '`/welcome disable`', '`/welcome preview`',
-          '`/welcome embed edit`', '`/welcome embed clear [field]`',
-          '`,welcome channel #channel`', '`,welcome message text`',
-          '`,welcome status|disable|preview`', '`,welcome embed edit|clear [field]`',
+          '`/welcome channel channel`, `/welcome message message`',
+          '`/welcome status`, `/welcome disable`, `/welcome preview`',
+          '`/welcome embed edit`, `/welcome embed clear [field]`',
+          '`/set-welcome-channel channel`, `/set-welcome-message message`',
+          '`/edit-embed`',
+          'Embed variables: `{user}`, `{user.name}`, `{user.id}`, `{user.avatar}`, `{user.createdAt}`, `{user.joinedAt}`, `{server.name}`, `{server.id}`, `{server.memberCount}`, `{server.icon}`, `{channel.name}`, `{channel.id}`.',
         ].join('\n'),
       },
     ],
   };
 }
 
-module.exports = { getCommands, buildHelpEmbed, MODERATION_PERMISSIONS };
+function isCommaHelpCommand(content) {
+  return typeof content === 'string' && content.trim().toLowerCase() === ',help';
+}
+
+module.exports = { getCommands, buildHelpEmbed, isCommaHelpCommand, MODERATION_PERMISSIONS };

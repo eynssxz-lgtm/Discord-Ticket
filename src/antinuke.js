@@ -1,20 +1,46 @@
-const { AuditLogEvent, GatewayIntentBits, PermissionsBitField } = require('discord.js');
+const {
+  AuditLogEvent,
+  EmbedBuilder,
+  GatewayIntentBits,
+  PermissionsBitField,
+} = require('discord.js');
 
 const ACTION_GROUPS = new Map([
+  [AuditLogEvent.GuildUpdate, 'guild-update'],
+  [AuditLogEvent.ChannelCreate, 'channel-create'],
   [AuditLogEvent.ChannelDelete, 'channel-delete'],
+  [AuditLogEvent.ChannelOverwriteCreate, 'dangerous-permission-grant'],
+  [AuditLogEvent.ChannelOverwriteUpdate, 'dangerous-permission-grant'],
   [AuditLogEvent.RoleDelete, 'role-delete'],
   [AuditLogEvent.RoleCreate, 'role-create'],
   [AuditLogEvent.RoleUpdate, 'dangerous-permission-grant'],
-  [AuditLogEvent.ChannelOverwriteCreate, 'dangerous-permission-grant'],
-  [AuditLogEvent.ChannelOverwriteUpdate, 'dangerous-permission-grant'],
   [AuditLogEvent.MemberRoleUpdate, 'dangerous-role-assignment'],
   [AuditLogEvent.MemberBanAdd, 'member-removal'],
   [AuditLogEvent.MemberKick, 'member-removal'],
   [AuditLogEvent.MemberPrune, 'member-prune'],
   [AuditLogEvent.BotAdd, 'bot-add'],
   [AuditLogEvent.InviteCreate, 'invite-create'],
-  [AuditLogEvent.WebhookDelete, 'webhook-delete'],
+  [AuditLogEvent.InviteUpdate, 'invite-change'],
+  [AuditLogEvent.InviteDelete, 'invite-change'],
+  [AuditLogEvent.WebhookCreate, 'webhook-change'],
+  [AuditLogEvent.WebhookUpdate, 'webhook-change'],
+  [AuditLogEvent.WebhookDelete, 'webhook-change'],
+  [AuditLogEvent.MessageBulkDelete, 'message-bulk-delete'],
+  [AuditLogEvent.IntegrationCreate, 'integration-change'],
+  [AuditLogEvent.IntegrationUpdate, 'integration-change'],
+  [AuditLogEvent.IntegrationDelete, 'integration-change'],
+  [AuditLogEvent.EmojiCreate, 'emoji-change'],
+  [AuditLogEvent.EmojiUpdate, 'emoji-change'],
+  [AuditLogEvent.EmojiDelete, 'emoji-change'],
+  [AuditLogEvent.StickerCreate, 'sticker-change'],
+  [AuditLogEvent.StickerUpdate, 'sticker-change'],
+  [AuditLogEvent.StickerDelete, 'sticker-change'],
+  [AuditLogEvent.ThreadDelete, 'thread-delete'],
+  [AuditLogEvent.AutoModerationRuleCreate, 'automod-rule-change'],
+  [AuditLogEvent.AutoModerationRuleUpdate, 'automod-rule-change'],
+  [AuditLogEvent.AutoModerationRuleDelete, 'automod-rule-change'],
 ]);
+const ACTION_GROUP_NAMES = [...new Set(ACTION_GROUPS.values())];
 const DANGEROUS_PERMISSIONS = [
   'Administrator',
   'ManageGuild',
@@ -33,7 +59,7 @@ const DANGEROUS_PERMISSIONS = [
   'MentionEveryone',
 ].map((name) => PermissionsBitField.Flags[name]).filter((flag) => flag !== undefined);
 const THRESHOLD = 1;
-const WINDOW_MS = 10_000;
+const WINDOW_MS = 1_000;
 const DELETED_CHANNEL_TTL_MS = 20_000;
 const TIMEOUT_MS = 10 * 60 * 1000;
 const PUNISHMENTS = ['remove-roles', 'timeout', 'kick', 'ban', 'none'];
@@ -118,15 +144,27 @@ function hasWhitelistedRole(config, roleIds) {
   return roleIds.some((id) => config.roleIds.includes(id));
 }
 
-function getReadiness(guild, client, punishment) {
+function getReadiness(guild, client, punishment, config = {}) {
   const permissions = guild.members.me?.permissions;
   const requiredPunishmentPermission = PUNISHMENT_PERMISSIONS[punishment] || null;
+  const configuredPunishments = [
+    punishment,
+    ...Object.values(config.actionPunishments || {}),
+    ...(config.raid?.enabled ? [config.raid.punishment] : []),
+  ];
+  const missingPunishmentPermissions = [...new Set(configuredPunishments)]
+    .filter((configuredPunishment) => {
+      const requiredPermission = PUNISHMENT_PERMISSIONS[configuredPunishment];
+      return requiredPermission && !permissions?.has(requiredPermission);
+    })
+    .map((configuredPunishment) => PUNISHMENT_PERMISSION_NAMES[configuredPunishment]);
   return {
     moderationIntent: Boolean(client.options?.intents?.has?.(GatewayIntentBits.GuildModeration)),
     viewAuditLog: Boolean(permissions?.has(PermissionsBitField.Flags.ViewAuditLog)),
     punishmentPermission: requiredPunishmentPermission === null
       || Boolean(permissions?.has(requiredPunishmentPermission)),
     punishmentPermissionName: PUNISHMENT_PERMISSION_NAMES[punishment] || null,
+    missingPunishmentPermissions,
   };
 }
 
@@ -155,19 +193,22 @@ async function applyPunishment(member, punishment, reason) {
 }
 
 async function sendPunishmentNotice(member, guild, actionGroup, punishment) {
-  if (!['remove-roles', 'kick', 'ban'].includes(punishment)) return;
-  const action = punishment === 'remove-roles'
-    ? 'stripped of all manageable roles'
-    : punishment === 'kick' ? 'kicked' : 'banned';
-  const actionWord = THRESHOLD === 1 ? 'action' : 'actions';
-  const secondWord = WINDOW_MS === 1_000 ? 'second' : 'seconds';
-  const notice = [
-    `You are being ${action} from **${guild.name}** by the server's antinuke protection.`,
-    `Reason: ${THRESHOLD} matching **${actionGroup}** ${actionWord} were detected from your account within ${WINDOW_MS / 1000} ${secondWord}.`,
-    `Action taken: **${punishment}**.`,
-  ].join('\n');
+  if (punishment === 'none') return;
+  const user = member.user || member;
+  const seconds = WINDOW_MS / 1000;
+  const secondWord = seconds === 1 ? 'second' : 'seconds';
+  const embed = new EmbedBuilder()
+    .setColor(0xed4245)
+    .setTitle('User Punished')
+    .setDescription(`Security responded in ${seconds} ${secondWord}! AYOKO SAYO WANNA BE NUKER KA BOBO\n\nAnti Nuke has punished a user, details:`)
+    .addFields(
+      { name: 'Server', value: guild.name || guild.id, inline: false },
+      { name: 'User', value: `${user.tag || user.username || member.id} (<@${member.id}>)`, inline: false },
+      { name: 'Action', value: actionGroup.replaceAll('-', ' '), inline: true },
+      { name: 'Punishment Type', value: punishment, inline: true },
+    );
   try {
-    await member.send({ content: notice });
+    await member.send({ embeds: [embed], allowedMentions: { parse: [] } });
   } catch (error) {
     console.warn(`Could not DM antinuke notice to ${member.id}:`, error.message);
   }
@@ -175,10 +216,11 @@ async function sendPunishmentNotice(member, guild, actionGroup, punishment) {
 
 function attach(client, store, logIncident = async () => {}) {
   const recentActions = new Map();
+  const recentJoins = new Map();
   const deletedChannels = new Map();
   const lastPunishments = new Map();
 
-  const processAction = async (guild, member, actorId, actionGroup, targetId, config) => {
+  const processAction = async (guild, member, actorId, actionGroup, targetId, config, punishmentOverride = null) => {
     if (hasWhitelistedRole(config, member.roles.cache.keys())) return;
 
     const now = Date.now();
@@ -193,22 +235,30 @@ function attach(client, store, logIncident = async () => {}) {
 
     const entry = { executorId: actorId, targetId };
     const reason = `SINCLAIR antinuke: ${actionGroup} threshold exceeded`;
-    await sendPunishmentNotice(member, guild, actionGroup, config.punishment);
+    const punishment = punishmentOverride
+      || store.getActionPunishment?.(config, actionGroup)
+      || config.actionPunishments?.[actionGroup]
+      || config.punishment;
+    const notifyBeforePunishment = punishment === 'kick' || punishment === 'ban';
+    if (notifyBeforePunishment) await sendPunishmentNotice(member, guild, actionGroup, punishment);
     let punished;
     try {
-      punished = await applyPunishment(member, config.punishment, reason);
+      punished = await applyPunishment(member, punishment, reason);
     } catch (error) {
-      await writeIncidentLog(logIncident, guild, formatIncident(entry, actionGroup, config.punishment, 'failed'));
+      await writeIncidentLog(logIncident, guild, formatIncident(entry, actionGroup, punishment, 'failed'));
       throw error;
     }
+    if (punished && !notifyBeforePunishment) {
+      await sendPunishmentNotice(member, guild, actionGroup, punishment);
+    }
     lastPunishments.set(punishmentKey, now);
-    const outcome = punished ? `applied ${config.punishment}` : 'detected (no punishment)';
+    const outcome = punished ? `applied ${punishment}` : 'detected (no punishment)';
     console.warn(`Antinuke ${outcome} for ${actorId} in guild ${guild.id} for ${actionGroup}.`);
     await writeIncidentLog(logIncident, guild, formatIncident(
       entry,
       actionGroup,
-      config.punishment,
-      punished ? `applied ${config.punishment}` : 'detected; no punishment configured',
+      punishment,
+      punished ? `applied ${punishment}` : 'detected; no punishment configured',
     ));
   };
 
@@ -256,6 +306,35 @@ function attach(client, store, logIncident = async () => {}) {
     }
   });
 
+  client.on('guildMemberAdd', async (member) => {
+    const guild = member.guild;
+    if (!guild || member.id === guild.ownerId) return;
+    try {
+      const config = store.getConfig(guild.id);
+      if (!config.enabled || !config.raid?.enabled) return;
+      if (hasWhitelistedRole(config, member.roles.cache.keys())) return;
+
+      const now = Date.now();
+      const cutoff = now - config.raid.windowSeconds * 1000;
+      const joins = (recentJoins.get(guild.id) || []).filter((join) => join.timestamp >= cutoff);
+      joins.push({ id: member.id, timestamp: now });
+      recentJoins.set(guild.id, joins);
+      if (joins.length < config.raid.threshold) return;
+
+      await processAction(
+        guild,
+        member,
+        member.id,
+        'raid-join-burst',
+        member.id,
+        config,
+        config.raid.punishment,
+      );
+    } catch (error) {
+      console.error(`Antinuke could not process raid join ${member.id} in guild ${guild.id}:`, error.message);
+    }
+  });
+
   client.on('messageCreate', async (message) => {
     const guild = message.guild;
     const actorId = message.author?.id;
@@ -296,6 +375,8 @@ async function writeIncidentLog(logIncident, guild, message) {
 }
 
 module.exports = {
+  ACTION_GROUPS,
+  ACTION_GROUP_NAMES,
   parseSnowflake,
   getActionGroup,
   containsDiscordInvite,

@@ -60,7 +60,7 @@ function getCommands() {
       .setDefaultMemberPermissions(manageGuild)
       .addStringOption((option) => option
         .setName('message')
-        .setDescription('Use {user}, {username}, {server}, or {memberCount}')
+        .setDescription('Supports user, server, channel, avatar, and timestamp variables')
         .setMaxLength(2000)
         .setRequired(true)),
     new SlashCommandBuilder()
@@ -79,7 +79,7 @@ function getCommands() {
         .setDescription('Set the text shown when a member joins')
         .addStringOption((option) => option
           .setName('message')
-          .setDescription('Use {user}, {username}, {server}, or {memberCount}')
+          .setDescription('Supports user, server, channel, avatar, and timestamp variables')
           .setMaxLength(2000)
           .setRequired(true)))
       .addSubcommand((subcommand) => subcommand.setName('status').setDescription('Show welcome settings'))

@@ -11,16 +11,22 @@ const logChannelStore = require('./logChannelStore');
 const autoresponderStore = require('./autoresponderStore');
 const antinuke = require('./antinuke');
 const antinukeStore = require('./antinukeStore');
+const antinukeInteractions = require('./antinukeInteractions');
 const welcome = require('./welcome');
 const welcomeStore = require('./welcomeStore');
 const welcomeInteractions = require('./welcomeInteractions');
 const commandInteractions = require('./commandInteractions');
 const commandHandler = require('./commandHandler');
 const tempVoice = require('./tempVoice');
+const tempVoiceControls = require('./tempVoiceControls');
+const tempVoiceStore = require('./tempVoiceStore');
 const afk = require('./afk');
 const afkStore = require('./afkStore');
-const { buildDeletedMessageLog, buildServerLogPayload } = require('./messageLogs');
-const { wrapCommandReplyMethods } = require('./commandReplies');
+const tickets = require('./tickets');
+const ticketStore = require('./ticketStore');
+const roleAssignment = require('./roleAssignment');
+const nsfwLinkGuard = require('./nsfwLinkGuard');
+const nsfwLinkStore = require('./nsfwLinkStore');
 
 const token = process.env.DISCORD_TOKEN;
 const applicationId = process.env.DISCORD_CLIENT_ID;
@@ -63,17 +69,17 @@ client.once('ready', async () => {
 
 client.on('guildCreate', registerGuildCommands);
 
-async function getLogChannel(guild) {
+async function getLogChannel(guild, type = 'default') {
   if (!guild) return null;
-  const channelId = logChannelStore.getLogChannel(guild.id);
+  const channelId = logChannelStore.getLogChannel(guild.id, type);
   if (!channelId) return null;
   return client.channels.cache.get(channelId) || client.channels.fetch(channelId).catch(() => null);
 }
 
-async function sendServerLog(guild, content) {
-  const channel = await getLogChannel(guild);
+async function sendServerLog(guild, content, type = 'default') {
+  const channel = await getLogChannel(guild, type);
   if (!channel || !channel.isTextBased?.()) return;
-  await channel.send(buildServerLogPayload(content)).catch(() => null);
+  await channel.send(content).catch(() => null);
 }
 
 client.on('voiceStateUpdate', async (oldState, newState) => {
@@ -91,43 +97,80 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
   const newChannelId = newState.channelId;
   if (oldChannelId === newChannelId) return;
   if (!oldChannelId && newChannelId) {
-    await sendServerLog(guild, `🔊 ${member.user.tag} joined <#${newChannelId}>.`);
+    await sendServerLog(guild, `🔊 ${member.user.tag} joined <#${newChannelId}>.`, 'voice');
     return;
   }
   if (oldChannelId && !newChannelId) {
-    await sendServerLog(guild, `🔊 ${member.user.tag} left <#${oldChannelId}>.`);
+    await sendServerLog(guild, `🔊 ${member.user.tag} left <#${oldChannelId}>.`, 'voice');
     return;
   }
   if (oldChannelId && newChannelId) {
-    await sendServerLog(guild, `🔊 ${member.user.tag} moved from <#${oldChannelId}> to <#${newChannelId}>.`);
+    await sendServerLog(guild, `🔊 ${member.user.tag} moved from <#${oldChannelId}> to <#${newChannelId}>.`, 'voice');
   }
 });
 
 client.on('messageDelete', async (message) => {
   if (!message.guild || message.author?.bot) return;
 
-  const logChannel = await getLogChannel(message.guild);
-  if (!logChannel) return;
-
-  await logChannel.send(buildDeletedMessageLog(message)).catch((error) => {
-    console.error(`Could not log deleted message ${message.id || 'unknown'} in guild ${message.guild.id}:`, error.message);
-  });
+  if (message.content && message.content.trim()) {
+    const channel = await getLogChannel(message.guild, 'message-delete');
+    if (channel?.isTextBased?.()) {
+      await channel.send(`🗑️ Message deleted in <#${message.channel.id}> by ${message.author.tag}:\n${message.content.slice(0, 1000)}`).catch(() => null);
+    }
+  }
+  for (const attachment of message.attachments.values()) {
+    const isImage = attachment.contentType?.startsWith('image/')
+      || /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(attachment.url);
+    const isVideo = attachment.contentType?.startsWith('video/')
+      || /\.(mp4|mov|webm|mkv|avi)(\?.*)?$/i.test(attachment.url);
+    if (!isImage && !isVideo) continue;
+    const type = isImage ? 'image-delete' : 'video-delete';
+    const channel = await getLogChannel(message.guild, type);
+    if (!channel?.isTextBased?.()) continue;
+    await channel.send({
+      content: `${isImage ? '🖼️ Deleted image' : '🎞️ Deleted video'} from <#${message.channel.id}> by ${message.author.tag}.`,
+      files: [attachment.url],
+    }).catch(() => null);
+  }
 });
 
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.inGuild()) return;
-  wrapCommandReplyMethods(interaction);
 
-  if (interaction.isButton?.()) {
+  if (tickets.isTicketInteraction(interaction)) {
     try {
-      if (await commandHandler.handleTicketButton(interaction)) return;
+      await tickets.handleInteraction(interaction, ticketStore);
     } catch (error) {
-      console.error('Could not handle ticket button:', error.message);
-      const response = { content: 'The ticket action could not be completed. Check my permissions and try again.', ephemeral: true };
-      if (interaction.deferred || interaction.replied) await interaction.followUp(response);
-      else await interaction.reply(response);
-      return;
+      console.error(`Could not handle ticket interaction in guild ${interaction.guildId}:`, error.message);
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({ content: 'I could not complete that ticket action. Check my permissions and try again.', ephemeral: true });
+      }
     }
+    return;
+  }
+
+  if (antinukeInteractions.isAntinukeComponent(interaction)) {
+    try {
+      await antinukeInteractions.handleComponent(interaction, antinukeStore);
+    } catch (error) {
+      console.error(`Could not handle antinuke setup in guild ${interaction.guildId}:`, error.message);
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({ content: 'Could not update antinuke settings. Try the slash command instead.', ephemeral: true });
+      }
+    }
+    return;
+  }
+
+  if (tempVoiceControls.isControlInteraction(interaction)) {
+    try {
+      await tempVoiceControls.handleControlInteraction(interaction, tempVoiceStore);
+    } catch (error) {
+      console.error(`Could not handle temporary voice control in guild ${interaction.guildId}:`, error.message);
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({ content: 'I could not update this voice channel. Check my permissions and role hierarchy.', ephemeral: true });
+      }
+    }
+    return;
   }
 
   if (interaction.isChatInputCommand()) {
@@ -213,7 +256,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
     if (action === 'preview') {
-      const payload = welcome.buildPayload(welcomeStore.getConfig(interaction.guildId), interaction.member);
+      const payload = welcome.buildPayload(welcomeStore.getConfig(interaction.guildId), interaction.member, interaction.channel);
       if (!payload.content && payload.embeds.length === 0) {
         await interaction.reply({ content: 'Set a welcome message or embed content before previewing.', ephemeral: true });
         return;
@@ -266,16 +309,25 @@ client.on('interactionCreate', async (interaction) => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
+  if (commandInteractions.isCommaHelpCommand(message.content)) {
+    await message.reply({ embeds: [commandInteractions.buildHelpEmbed()] });
+    return;
+  }
+  try {
+    if (await nsfwLinkGuard.handleMessage(message, nsfwLinkStore, (code) => client.fetchInvite(code))) return;
+  } catch (error) {
+    console.error(`Could not check NSFW server links in guild ${message.guild.id}:`, error.message);
+  }
+  try {
+    if (await roleAssignment.handlePrefixRoleAdd(message)) return;
+  } catch (error) {
+    console.error(`Could not handle role command in guild ${message.guild.id}:`, error.message);
+    await message.reply('I could not assign that role. Check my permissions and role hierarchy.');
+    return;
+  }
   await afk.handleMessage(message, afkStore).catch((error) => {
     console.error(`Could not process AFK status in guild ${message.guild.id}:`, error.message);
   });
-  try {
-    if (await commandHandler.handlePrefixCommand(message)) return;
-  } catch (error) {
-    console.error(`Could not handle comma command in guild ${message.guild.id}:`, error.message);
-    await message.reply('The command could not be completed. Check the bot permissions and try again.').catch(() => null);
-    return;
-  }
   const response = autoresponderStore.find(message.guild.id, message.content);
   if (response) await message.reply(response);
 });
@@ -286,7 +338,7 @@ client.on('guildMemberAdd', async (member) => {
   const channel = member.guild.channels.cache.get(config.channelId);
   if (!channel?.isTextBased() || channel.isThread()) return;
 
-  const payload = welcome.buildPayload(config, member);
+  const payload = welcome.buildPayload(config, member, channel);
   if (!payload.content && payload.embeds.length === 0) return;
   try {
     await channel.send(payload);
@@ -295,6 +347,6 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
-antinuke.attach(client, antinukeStore, sendServerLog);
+antinuke.attach(client, antinukeStore, (guild, content) => sendServerLog(guild, content, 'security'));
 
 client.login(token);
